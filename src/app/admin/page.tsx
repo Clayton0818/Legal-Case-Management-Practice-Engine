@@ -32,9 +32,14 @@ export default async function AdminHome() {
             {matterRows.length} matter{matterRows.length === 1 ? "" : "s"} for this firm.
           </p>
         </div>
-        <Link href="/admin/insights" className="text-sm text-slate-500 hover:underline">
-          View insights →
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link href="/demo" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1 text-sm font-medium text-amber-900 hover:bg-amber-100">
+            Demo (fictional data) →
+          </Link>
+          <Link href="/admin/insights" className="text-sm text-slate-500 hover:underline">
+            View insights →
+          </Link>
+        </div>
       </div>
 
       {matterRows.length === 0 ? (

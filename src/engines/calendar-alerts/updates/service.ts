@@ -19,7 +19,7 @@ import { calendarEvents, notificationOutbox } from "@/db/tables/foundation";
 import { clientUpdateCadences, clientUpdateReads, clientUpdates } from "@/db/tables/calendar-alerts";
 import type { TenantTx } from "@/tenancy/withTenant";
 import { NOTIFY_COPY_GATES } from "@/compliance/gates";
-import { addBusinessHours } from "@/core/businessHours";
+import { addBusinessDays } from "@/core/businessHours";
 import { audit, type Actor } from "@/core/audit";
 import { toBusinessCalendar } from "@/core/firmSettings";
 import { cancelTask, completeTask, createTask, getTask } from "@/core/tasks";
@@ -30,9 +30,6 @@ import { assertClientOfMatter } from "../replyClock/service";
 import { draftFromConfirmedEvent, reviewUpdateText, summariseDelivery, toClientHistory, type ClientUpdateView, type UpdateAuthorType } from "./model";
 
 export type UpdateRow = typeof clientUpdates.$inferSelect;
-
-/** One business day for cadence purposes (the default 09:00–17:00 day). */
-export const BUSINESS_DAY_HOURS = 8;
 
 const LANG = /^[a-z]{2}(-[A-Z]{2})?$/;
 
@@ -309,7 +306,7 @@ async function refreshCadence(tx: TenantTx, ctx: EngineContext, tenantId: string
     .limit(1);
   const from = last?.sentAt ?? now;
   const cal = toBusinessCalendar(ctx.firm);
-  const dueAt = addBusinessHours(from, cad.everyBusinessDays * BUSINESS_DAY_HOURS, cal);
+  const dueAt = addBusinessDays(from, cad.everyBusinessDays, cal);
   const matter = await getMatter(tx, tenantId, matterId);
   const lawyer = await responsibleLawyer(tx, tenantId, matter);
   const task = await createTask(

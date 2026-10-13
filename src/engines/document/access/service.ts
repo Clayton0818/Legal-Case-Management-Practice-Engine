@@ -6,6 +6,7 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import { matters, users } from "@/db/schema";
 import { documentAccessBlocks, documentAccessLog } from "@/db/tables/document";
 import { audit, getFirmSettings, type Actor } from "@/core";
+import { screenedMatterIdsForUser } from "@/core/screens";
 import type { TenantTx } from "@/tenancy/withTenant";
 import { DocumentAccessDeniedError, DocumentError, NotFoundError } from "../errors";
 import { ENGINE, readDocumentSettings, type DocumentSettings } from "../settings";
@@ -36,22 +37,34 @@ export const localBlocksScreenSource: ScreenSource = {
   },
 };
 
-let screenSources: ScreenSource[] = [localBlocksScreenSource];
+/**
+ * Shared screens (wave 3): every ethical screen in force, including the
+ * conflict-check engine's conflict_screens, through the core read API
+ * (src/core/screens.ts, the active_ethical_screens view).
+ */
+export const sharedScreensSource: ScreenSource = {
+  name: "core.active_ethical_screens",
+  screenedMatterIds: (tx, tenantId, userId) => screenedMatterIdsForUser(tx, tenantId, userId),
+};
+
+/** The defaults: the local mirror (kept as the fallback, and for 'restricted'/'other' blocks) plus the shared screens. */
+const DEFAULT_SCREEN_SOURCES: readonly ScreenSource[] = [localBlocksScreenSource, sharedScreensSource];
+
+let screenSources: ScreenSource[] = [...DEFAULT_SCREEN_SOURCES];
 let scopeSources: MatterScopeSource[] = [];
 
 /**
- * Plug in extra access sources (integration step / tests): e.g. a source
- * reading a shared screens table once the foundation adds one, or a c99
- * matter-scope source. The local mirror is always kept unless
- * `replaceDefaults` is set.
+ * Plug in extra access sources (integration step / tests): e.g. a c99
+ * matter-scope source. The defaults (local mirror + shared screens) are
+ * always kept unless `replaceDefaults` is set.
  */
 export function setAccessHooks(next: { screens?: ScreenSource[]; scopes?: MatterScopeSource[]; replaceDefaults?: boolean } | null): void {
   if (next === null) {
-    screenSources = [localBlocksScreenSource];
+    screenSources = [...DEFAULT_SCREEN_SOURCES];
     scopeSources = [];
     return;
   }
-  if (next.screens) screenSources = next.replaceDefaults ? [...next.screens] : [localBlocksScreenSource, ...next.screens];
+  if (next.screens) screenSources = next.replaceDefaults ? [...next.screens] : [...DEFAULT_SCREEN_SOURCES, ...next.screens];
   if (next.scopes) scopeSources = [...next.scopes];
 }
 

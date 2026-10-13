@@ -8,7 +8,9 @@
 // spec defaults below. None of these are approval gates.
 //
 // Durations are BUSINESS hours unless the name says Real/Days/Minutes-real.
-// "1 business day" defaults to 8 business hours (the default 09:00–17:00 day).
+// Settings named *BusinessHours are hours (e.g. 8 = one default 09:00–17:00
+// day); settings named *BusinessDays are counted with the core helpers
+// addBusinessDays / businessDaysBetween on the firm's own calendar.
 
 import { engineSetting, type FirmSettings } from "@/core/firmSettings";
 

@@ -1,6 +1,6 @@
 # c99 — Detailed permissions for each role
 
-**Builds on:** c34 (staff auth + `users.role` + `user_capabilities`, platform engine). **Code:** `src/engines/all-engines/permissions/policy.ts` (pure), `service.ts` (DB).
+**Builds on:** c34 (staff auth + `users.role` + `user_capabilities`, platform engine). **Code:** `src/core/permissions.ts` (pure; moved from `src/engines/all-engines/permissions/policy.ts` in wave 3), `service.ts` (DB).
 
 ## Model
 

@@ -1,7 +1,7 @@
 // Errors the All-engines services throw for the routes to map to HTTP.
 
 import { PendingApprovalError } from "@/compliance/approvals";
-import { PermissionDeniedError } from "../permissions/policy";
+import { PermissionDeniedError } from "@/core/permissions";
 
 export const ENGINE = "all-engines" as const;
 

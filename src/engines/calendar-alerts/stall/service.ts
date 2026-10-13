@@ -10,7 +10,7 @@ import { stallWatches } from "@/db/tables/calendar-alerts";
 import type { TenantTx } from "@/tenancy/withTenant";
 import { audit, SYSTEM_ACTOR } from "@/core/audit";
 import { toBusinessCalendar } from "@/core/firmSettings";
-import { resolveFlag } from "@/core/flags";
+import { isFlagNotFound, resolveFlag } from "@/core/flags";
 import { AlertRuleError, loadPeople, raiseAlert, type EngineContext } from "../common";
 import { FLAG_TYPES } from "../kinds";
 import { ENGINE } from "../settings";
@@ -236,7 +236,7 @@ async function clearWatch(tx: TenantTx, watch: StallWatchRow, reason: string, no
   if (watch.flagId) {
     await resolveFlag(tx, { tenantId: watch.tenantId, flagId: watch.flagId, by: SYSTEM_ACTOR, reason, engine: ENGINE, at: now }).catch((err: unknown) => {
       // Already resolved by a person (with their own reason): nothing more to clear.
-      if (!(err instanceof Error && /not found/.test(err.message))) throw err;
+      if (!isFlagNotFound(err)) throw err;
     });
   }
   await audit(tx, { tenantId: watch.tenantId, engine: ENGINE, action: "stall.cleared", entityType: "stall_watch", entityId: watch.id, matterId: watch.matterId, reason });
@@ -260,7 +260,7 @@ export async function setCheckBack(
   const by = { type: "user" as const, userId: input.userId };
   if (watch.flagId) {
     await resolveFlag(tx, { tenantId: input.tenantId, flagId: watch.flagId, by, reason, checkBackAt: input.checkBackAt, engine: ENGINE, at: input.now }).catch((err: unknown) => {
-      if (!(err instanceof Error && /not found/.test(err.message))) throw err;
+      if (!isFlagNotFound(err)) throw err;
     });
   }
   const [row] = await tx

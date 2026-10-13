@@ -21,7 +21,18 @@
 //   - deadline confirmation / conflict clearing are never AI permissions
 //     (there is no AI principal at all).
 
+//
+// Wave 3: the c34 permission vocabulary below is kept (routes and pages use
+// it), but the DECISION permissions (confirm a deadline, clear a conflict,
+// approve a trust disbursement, approve a document) are now decided by the
+// shared policy, src/core/permissions.ts can(), so the attorney-only rule has
+// one implementation. The role tables still list them for attorneys; the
+// shared policy removes them from anyone it would refuse. An exhaustive test
+// (rbac.delegation.test.ts) pins that the result is identical to the
+// pre-wave-3 behaviour for every role × capability set × status.
+
 import { userRoleEnum } from "@/db/schema";
+import { baseRolesFor, can as policyCan, type PolicyActor } from "@/core/permissions";
 
 export const ROLES = userRoleEnum.enumValues;
 export type Role = (typeof ROLES)[number];
@@ -159,6 +170,25 @@ export interface RbacSubject {
   status?: string;
 }
 
+/**
+ * c34 permissions that are c99 decision rights. Holding the c34 permission is
+ * necessary but no longer sufficient: the shared policy must also allow the
+ * mapped right for the subject's roles (it enforces attorney-only, "decisions
+ * need a person" and inactive users). Every ATTORNEY_ONLY entry is listed.
+ */
+export const DECISION_RIGHTS: Readonly<Partial<Record<Permission, string>>> = {
+  "calendar.confirm_deadline": "deadlines.confirm",
+  "conflicts.clear": "conflicts.decide",
+  "trust.approve_disbursement": "trust.approve_disbursement",
+  "documents.approve": "documents.approve",
+};
+
+/** The shared-policy actor for a c34 subject (roles from users.role + eligible capabilities). Pure. */
+export function policyActorFor(subject: RbacSubject): PolicyActor {
+  const capabilities = subject.capabilities.filter((c) => CAPABILITY_ELIGIBLE_ROLES[c]?.includes(subject.role));
+  return { kind: "staff", userId: null, roles: baseRolesFor(subject.role, capabilities), status: subject.status ?? "active" };
+}
+
 /** The effective permission set. Pure. */
 export function permissionsFor(subject: RbacSubject): Set<Permission> {
   const out = new Set<Permission>();
@@ -168,7 +198,10 @@ export function permissionsFor(subject: RbacSubject): Set<Permission> {
     if (!CAPABILITY_ELIGIBLE_ROLES[c]?.includes(subject.role)) continue; // stale/ineligible grant
     for (const p of CAPABILITY_PERMISSIONS[c]) out.add(p);
   }
-  if (subject.role !== "attorney") for (const p of ATTORNEY_ONLY) out.delete(p);
+  const actor = policyActorFor(subject);
+  for (const [permission, right] of Object.entries(DECISION_RIGHTS) as [Permission, string][]) {
+    if (out.has(permission) && !policyCan(actor, right)) out.delete(permission);
+  }
   return out;
 }
 

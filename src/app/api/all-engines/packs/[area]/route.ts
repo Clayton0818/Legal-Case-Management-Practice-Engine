@@ -1,6 +1,6 @@
 import { allEnginesRoute } from "@/app/api/all-engines/_lib/route";
 import { AllEnginesError } from "@/engines/all-engines/common/errors";
-import { FIRM, assertCan } from "@/engines/all-engines/permissions/policy";
+import { FIRM, assertCan } from "@/core/permissions";
 import { getPack, packContentHash } from "@/engines/all-engines/packs/registry";
 import "@/engines/all-engines/gates";
 

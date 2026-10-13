@@ -2,15 +2,12 @@
 // roles, matter teams/restrictions, and the append-only change log. Every
 // write checks `permissions.manage` itself (defence in depth: routes check too).
 
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { matterParties, matters, users } from "@/db/schema";
-import {
-  accessChangeLog,
-  firmRoleAssignments,
-  matterAccessSettings,
-  matterTeamMembers,
-  permissionOverrides,
-} from "@/db/tables/all-engines";
+import { accessChangeLog, matterAccessSettings, matterTeamMembers } from "@/db/tables/all-engines";
+import { firmRoleAssignments, permissionOverrides } from "@/db/tables/foundation";
+import { activeCapabilities, activeCapabilitiesByUser, assignedRolesByUser, loadPolicyActor, loadPolicyConfig } from "@/core/permissionActor";
+import { screenedUserIdsForMatter } from "@/core/screens";
 import { audit, type Actor } from "@/core/audit";
 import type { TenantTx } from "@/tenancy/withTenant";
 import { AllEnginesError, ENGINE } from "../common/errors";
@@ -23,7 +20,6 @@ import {
   combineRoles,
   decide,
   effectiveRights,
-  isFirmRole,
   planOverrideChange,
   rightDef,
   validateRoleGrant,
@@ -35,7 +31,7 @@ import {
   type PolicyActor,
   type PolicyConfig,
   type PolicyResource,
-} from "./policy";
+} from "@/core/permissions";
 
 // ---------------------------------------------------------------------------
 // Who is acting
@@ -61,41 +57,22 @@ export interface StaffContext {
   config: PolicyConfig;
 }
 
-export async function loadPolicyConfig(tx: TenantTx, tenantId: string): Promise<PolicyConfig> {
-  const rows = await tx
-    .select({ role: permissionOverrides.role, right: permissionOverrides.right, effect: permissionOverrides.effect })
-    .from(permissionOverrides)
-    .where(eq(permissionOverrides.tenantId, tenantId));
-  return { overrides: rows.map((r) => ({ role: r.role, right: r.right, effect: r.effect as OverrideEffect })) };
-}
-
-async function assignedRolesFor(tx: TenantTx, tenantId: string, userIds: readonly string[]): Promise<Map<string, FirmRole[]>> {
-  const out = new Map<string, FirmRole[]>();
-  if (userIds.length === 0) return out;
-  const rows = await tx
-    .select({ userId: firmRoleAssignments.userId, role: firmRoleAssignments.role })
-    .from(firmRoleAssignments)
-    .where(and(eq(firmRoleAssignments.tenantId, tenantId), inArray(firmRoleAssignments.userId, [...userIds]), isNull(firmRoleAssignments.revokedAt)));
-  for (const r of rows) {
-    if (!isFirmRole(r.role)) continue;
-    out.set(r.userId, [...(out.get(r.userId) ?? []), r.role]);
-  }
-  return out;
-}
+// Role/override loading moved to the shared core (src/core/permissionActor.ts)
+// in wave 3, so tenantRoute({ right }) and this engine resolve roles the same way.
+export { loadPolicyConfig };
+const assignedRolesFor = assignedRolesByUser;
 
 /** Build the acting staff member's policy actor: c34 role/capabilities + roles assigned here. */
 export async function loadStaffContext(tx: TenantTx, tenantId: string, principal: PrincipalLike): Promise<StaffContext> {
-  const baseRoles = baseRolesFor(principal.role, principal.capabilities);
-  const assignedRoles = principal.userId ? ((await assignedRolesFor(tx, tenantId, [principal.userId])).get(principal.userId) ?? []) : [];
-  const roles = combineRoles(baseRoles, assignedRoles);
+  const r = await loadPolicyActor(tx, tenantId, { userId: principal.userId, role: principal.role, capabilities: principal.capabilities, status: "active" });
   return {
     userId: principal.userId,
-    roles,
-    baseRoles,
-    assignedRoles,
-    actor: { kind: "staff", userId: principal.userId, roles, status: "active" },
+    roles: r.roles,
+    baseRoles: r.baseRoles,
+    assignedRoles: r.assignedRoles,
+    actor: r.actor,
     auditActor: principal.userId ? { type: "user", userId: principal.userId } : { type: "system" },
-    config: await loadPolicyConfig(tx, tenantId),
+    config: r.config,
   };
 }
 
@@ -257,16 +234,14 @@ export interface RoleHolder {
 }
 
 /**
- * Every staff user with their roles. c34 capabilities live in the platform
- * engine's table, which this engine may not read: `capabilitiesByUser`
- * lets a route pass them in (see the Foundation request); without it,
- * base roles come from users.role only.
+ * Every staff user with their roles. c34 capabilities are read through the
+ * core API (activeCapabilitiesByUser) unless the caller passes them in.
  */
 export async function listRoleHolders(
   tx: TenantTx,
   tenantId: string,
   viewer: StaffContext,
-  capabilitiesByUser: ReadonlyMap<string, readonly string[]> = new Map()
+  capabilitiesByUserIn?: ReadonlyMap<string, readonly string[]>
 ): Promise<RoleHolder[]> {
   assertCan(viewer.actor, "permissions.manage", FIRM, viewer.config);
   const rows = await tx
@@ -274,6 +249,7 @@ export async function listRoleHolders(
     .from(users)
     .where(eq(users.tenantId, tenantId))
     .orderBy(users.displayName);
+  const capabilitiesByUser = capabilitiesByUserIn ?? (await activeCapabilitiesByUser(tx, tenantId, rows.map((r) => r.id)));
   const assigned = await assignedRolesFor(tx, tenantId, rows.map((r) => r.id));
   return rows.map((r) => {
     const baseRoles = baseRolesFor(r.role, capabilitiesByUser.get(r.id) ?? []);
@@ -307,7 +283,7 @@ async function countOwners(tx: TenantTx, tenantId: string): Promise<number> {
   return new Set(rows.map((r) => r.userId)).size;
 }
 
-async function loadTargetUser(tx: TenantTx, tenantId: string, userId: string, capabilities: readonly string[]) {
+async function loadTargetUser(tx: TenantTx, tenantId: string, userId: string, capabilitiesIn: readonly string[] | undefined) {
   const [u] = await tx
     .select({ id: users.id, role: users.role, status: users.status })
     .from(users)
@@ -315,6 +291,7 @@ async function loadTargetUser(tx: TenantTx, tenantId: string, userId: string, ca
     .limit(1);
   if (!u) throw new AllEnginesError("No such user in this firm.", 404);
   const assignedRoles = (await assignedRolesFor(tx, tenantId, [userId])).get(userId) ?? [];
+  const capabilities = capabilitiesIn ?? (await activeCapabilities(tx, tenantId, userId));
   const baseRoles = baseRolesFor(u.role, capabilities);
   return { ...u, baseRoles, assignedRoles, roles: combineRoles(baseRoles, assignedRoles) };
 }
@@ -324,7 +301,7 @@ export async function grantRole(
   input: { tenantId: string; by: StaffContext; userId: string; role: string; reason: string; targetCapabilities?: readonly string[] }
 ) {
   const { tenantId, by } = input;
-  const target = await loadTargetUser(tx, tenantId, input.userId, input.targetCapabilities ?? []);
+  const target = await loadTargetUser(tx, tenantId, input.userId, input.targetCapabilities);
   const errors = validateRoleGrant({
     granter: { userId: by.userId, roles: by.roles, status: "active" },
     grantee: { userId: target.id, status: target.status, roles: target.roles },
@@ -356,7 +333,7 @@ export async function revokeRole(
   input: { tenantId: string; by: StaffContext; userId: string; role: string; reason: string }
 ) {
   const { tenantId, by } = input;
-  const target = await loadTargetUser(tx, tenantId, input.userId, []);
+  const target = await loadTargetUser(tx, tenantId, input.userId, undefined);
   const errors = validateRoleRevoke({
     revoker: { userId: by.userId, roles: by.roles, status: "active" },
     target: { userId: target.id, assignedRoles: target.assignedRoles },
@@ -396,9 +373,9 @@ export async function revokeRole(
 // ---------------------------------------------------------------------------
 
 /**
- * Everything can() needs to know about a matter. Active ethical screens
- * (c60) are owned by the conflict-check engine and cannot be read from here;
- * callers pass them in until screens live in a shared table (Foundation request).
+ * Everything can() needs to know about a matter. Ethical screens (c60) come
+ * from the shared core read API (src/core/screens.ts: conflict_screens plus
+ * document ethical-screen blocks); ids a caller passes in are added to them.
  */
 export async function loadMatterRef(
   tx: TenantTx,
@@ -412,7 +389,7 @@ export async function loadMatterRef(
     .where(and(eq(matters.tenantId, tenantId), eq(matters.id, matterId)))
     .limit(1);
   if (!m) return null;
-  const [team, access, clients] = await Promise.all([
+  const [team, access, clients, screened] = await Promise.all([
     tx
       .select({ userId: matterTeamMembers.userId })
       .from(matterTeamMembers)
@@ -426,12 +403,13 @@ export async function loadMatterRef(
       .select({ partyId: matterParties.partyId })
       .from(matterParties)
       .where(and(eq(matterParties.tenantId, tenantId), eq(matterParties.matterId, matterId), eq(matterParties.role, "client"), isNull(matterParties.endedAt))),
+    screenedUserIdsForMatter(tx, tenantId, matterId),
   ]);
   const teamUserIds = [...new Set([...(m.assignedUserId ? [m.assignedUserId] : []), ...team.map((t) => t.userId)])];
   return {
     matterId,
     teamUserIds,
-    screenedUserIds: [...(opts.screenedUserIds ?? [])],
+    screenedUserIds: [...new Set([...screened, ...(opts.screenedUserIds ?? [])])],
     restricted: access[0]?.restricted ?? false,
     clientPartyIds: clients.map((c) => c.partyId),
   };

@@ -299,6 +299,123 @@ export function businessHoursBetween(a: Date, b: Date, cal: BusinessCalendar): n
   return total / HOUR_MS;
 }
 
+// ---------------------------------------------------------------------------
+// Business days
+// ---------------------------------------------------------------------------
+
+function prevCivil(c: Civil): Civil {
+  const t = new Date(Date.UTC(c.y, c.m - 1, c.d - 1));
+  return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
+}
+
+function sameCivil(a: Civil, b: Civil): boolean {
+  return a.y === b.y && a.m === b.m && a.d === b.d;
+}
+
+/**
+ * Where `at` sits on the business calendar: itself when it is business time,
+ * otherwise the most recent closing time (time outside business hours does
+ * not count, so Friday 18:00 and Saturday are both "Friday at close"). Falls
+ * back to the next opening when there is no earlier business time at all.
+ */
+function businessAnchor(at: number, cal: BusinessCalendar, holidays: Set<string>): { day: Civil; instant: number } {
+  let c = civilOf(at, cal.timeZone);
+  for (const [s, e] of intervalsFor(c, cal, holidays)) if (at >= s && at < e) return { day: c, instant: at };
+  // Latest close at or before `at`: today first, then earlier days. (An
+  // interval ending at "24:00" belongs to the day it started on, which is
+  // why yesterday is searched as its own day.)
+  for (let i = 0; i < MAX_DAYS; i++) {
+    const closed = intervalsFor(c, cal, holidays).filter(([, e]) => e <= at);
+    const last = closed[closed.length - 1];
+    if (last) return { day: c, instant: last[1] };
+    c = prevCivil(c);
+  }
+  const next = nextBusinessStart(new Date(at), cal).getTime();
+  return { day: civilOf(next, cal.timeZone), instant: next };
+}
+
+/**
+ * The same business moment `days` business days later. A business day is a
+ * local date with business hours that is not a holiday. The wall-clock time
+ * is kept (Tuesday 10:30 + 1 = Wednesday 10:30); a start outside business
+ * hours counts from the previous close (Friday 18:00 + 1 = Monday at close),
+ * and a time the target day does not cover is clamped into it (to its
+ * opening if earlier, otherwise to the latest close before it). So it agrees
+ * with addBusinessHours(start, days × hoursPerDay) on any calendar with a
+ * constant day length, and stays right when days differ in length (a 9-6
+ * day, a half-day Friday) or a holiday intervenes. `days` must be a whole
+ * number >= 0; 0 returns `start` unchanged.
+ */
+export function addBusinessDays(start: Date, days: number, cal: BusinessCalendar): Date {
+  if (!Number.isInteger(days) || days < 0) throw new Error(`addBusinessDays: days must be a whole number >= 0 (got ${days}).`);
+  validateCalendar(cal);
+  if (days === 0) return new Date(start.getTime());
+  const holidays = holidaySet(cal);
+  const anchor = businessAnchor(start.getTime(), cal, holidays);
+
+  // Wall-clock time of the anchor, in minutes past the anchor day's midnight
+  // (1440 when it is a "24:00" close), plus the leftover seconds/ms.
+  const local = toLocal(anchor.instant, cal.timeZone);
+  const onAnchorDay = sameCivil({ y: local.year, m: local.month, d: local.day }, anchor.day);
+  const wallMinutes = (onAnchorDay ? 0 : 1440) + local.hour * 60 + local.minute;
+  const subMinuteMs = anchor.instant - Math.floor(anchor.instant / MINUTE_MS) * MINUTE_MS;
+
+  let c = anchor.day;
+  for (let n = 0, i = 0; n < days; i++) {
+    if (i > MAX_DAYS) throw new Error("addBusinessDays: result is more than five years out — check the firm's holidays.");
+    c = nextCivil(c);
+    if (intervalsFor(c, cal, holidays).length > 0) n++;
+  }
+
+  const ivs = intervalsFor(c, cal, holidays);
+  const target =
+    wallMinutes >= 1440
+      ? (() => {
+          const n = nextCivil(c);
+          return fromLocal(n.y, n.m, n.d, 0, 0, cal.timeZone).getTime() + (wallMinutes - 1440) * MINUTE_MS + subMinuteMs;
+        })()
+      : fromLocal(c.y, c.m, c.d, Math.floor(wallMinutes / 60), wallMinutes % 60, cal.timeZone).getTime() + subMinuteMs;
+  if (ivs.some(([s, e]) => target >= s && target <= e)) return new Date(target);
+  const first = ivs[0]!;
+  if (target < first[0]) return new Date(first[0]);
+  const closed = ivs.filter(([, e]) => e <= target);
+  return new Date(closed[closed.length - 1]![1]);
+}
+
+/**
+ * Business days elapsed between `a` and `b` (fractional). Each business day
+ * counts as 1 however long it is: a day contributes the share of ITS business
+ * hours that fall between `a` and `b`. Negative when `b` is before `a`.
+ */
+export function businessDaysBetween(a: Date, b: Date, cal: BusinessCalendar): number {
+  validateCalendar(cal);
+  const from = a.getTime();
+  const to = b.getTime();
+  if (to < from) return -businessDaysBetween(b, a, cal);
+  if (to === from) return 0;
+  const holidays = holidaySet(cal);
+  let total = 0;
+  // Start a day early so an interval that ends at "24:00" of the previous day is seen.
+  let c = prevCivil(civilOf(from, cal.timeZone));
+  const last = localDateString(to, cal.timeZone);
+  for (let i = 0; i < MAX_DAYS + 2; i++) {
+    const ivs = intervalsFor(c, cal, holidays);
+    const dayLength = ivs.reduce((sum, [s, e]) => sum + (e - s), 0);
+    if (dayLength > 0) {
+      let inside = 0;
+      for (const [s, e] of ivs) {
+        const lo = Math.max(s, from);
+        const hi = Math.min(e, to);
+        if (hi > lo) inside += hi - lo;
+      }
+      total += inside / dayLength;
+    }
+    if (civilToString(c.y, c.m, c.d) === last) break;
+    c = nextCivil(c);
+  }
+  return total;
+}
+
 /** Add hours on either clock: 'business' (firm calendar) or 'real' (wall time). */
 export function addClockHours(start: Date, hours: number, clock: Clock, cal: BusinessCalendar): Date {
   if (clock === "real") {

@@ -132,7 +132,7 @@ export async function gatherCandidates(
     .select({
       userId: tasks.ownerUserId,
       open: count(),
-      overdue: sql<number>`count(*) filter (where ${tasks.dueAt} < ${now})`,
+      overdue: sql<number>`count(*) filter (where ${tasks.dueAt} < ${now.toISOString()}::timestamptz)`,
     })
     .from(tasks)
     .where(and(eq(tasks.tenantId, tenantId), eq(tasks.status, "open"), inArray(tasks.ownerUserId, ids)))

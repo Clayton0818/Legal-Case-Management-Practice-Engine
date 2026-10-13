@@ -15,6 +15,8 @@ so the rules below exist to keep seven streams of work from colliding.
 | `calendar-core` | Calendar & deadline engine: matter calendar, deadline calculators, limitations, task lists, stages | c91–c95 |
 | `billing-trust` | Billing & trust engine | c50, c52, c75–c83 |
 | `all-engines` | Cross-cutting: data import, permissions, mobile, reports, practice-area packs | c98–c105 |
+| `platform` | Auth, ops queue, widget | c34, c35, c37, c38 |
+| `demo` | Fictional DEMO firm, guarded reset, guided walkthrough (`/demo`). The one engine allowed to call other engines' services: its job is to drive them all. Nothing imports it. | c106 |
 
 The same list is in code as `ENGINE_SLUGS` (`src/core/engines.ts`).
 
@@ -81,7 +83,9 @@ gate's `draft` automatically re-closes it until it is reviewed again.
 
 - **Business hours vs real clock.** Firm timers count the firm's business
   hours (`addBusinessHours`, `businessHoursBetween`, or `createTask` with
-  `due: { hours, clock: "business" }`). Court notices and deadline safety nets
+  `due: { hours, clock: "business" }`). For "N business days" use
+  `addBusinessDays` / `businessDaysBetween` (the firm's own day length and
+  holidays), never `N * 8` hours. Court notices and deadline safety nets
   use the real clock (`clock: "real"`, or `deadlineCritical: true`, which
   forces the real clock, no grace period and critical severity).
 - **Internal flags stay internal.** `raiseFlag({ audience: "internal" })` can

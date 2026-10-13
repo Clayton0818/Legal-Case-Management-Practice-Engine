@@ -1,7 +1,7 @@
 // c99 — the firm's permission matrix, role holders and the change log.
 // Read here; changed through /api/all-engines/** (permissions.manage, logged).
 
-import { FIRM_ROLES, ROLE_INFO, type RightArea } from "@/engines/all-engines/permissions/policy";
+import { FIRM_ROLES, ROLE_INFO, type RightArea } from "@/core/permissions";
 import { withStaff } from "../_lib/load";
 import { MatrixCell } from "./matrix-cell";
 

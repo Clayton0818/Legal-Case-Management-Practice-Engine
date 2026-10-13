@@ -10,7 +10,7 @@ import { tenantRoute, type TenantRouteContext } from "@/tenancy/route";
 import { audit } from "@/core/audit";
 import { requirePrincipal } from "@/auth/request";
 import { ENGINE, mapHandledError, type MappedError } from "@/engines/all-engines/common/errors";
-import { PermissionDeniedError } from "@/engines/all-engines/permissions/policy";
+import { PermissionDeniedError } from "@/core/permissions";
 import { loadStaffContext, type StaffContext } from "@/engines/all-engines/permissions/service";
 
 export interface AllEnginesRouteContext extends TenantRouteContext {

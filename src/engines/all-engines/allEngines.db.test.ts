@@ -9,7 +9,7 @@ import { describeWithDb, loadDb } from "@/tenancy/testing";
 import type { TenantTx } from "@/tenancy/withTenant";
 import { firms, matters, parties, users } from "@/db/schema";
 import { getFirmSettings } from "@/core/firmSettings";
-import { can } from "./permissions/policy";
+import { can } from "@/core/permissions";
 import {
   addTeamMember,
   getPermissionMatrix,

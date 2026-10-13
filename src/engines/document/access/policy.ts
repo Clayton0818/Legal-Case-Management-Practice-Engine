@@ -9,11 +9,12 @@
 //   5. bytes safety  — infected / unscanned / still-scanning files are not served
 //
 // Screens live in the conflict-check engine's world, which this engine may
-// not import. So screens arrive through a ScreenSource: the default reads
-// this engine's own mirror table (document_access_blocks); a shared screens
-// table, or a predicate injected by the integrator, can be plugged in with
-// setAccessHooks() without changing any caller. Sources are combined with
-// UNION — any source that says "screened" wins.
+// not import. So screens arrive through a ScreenSource: the defaults read
+// this engine's own mirror table (document_access_blocks) and the shared
+// screens view through @/core/screens (which includes conflict_screens);
+// a predicate injected by the integrator can be added with setAccessHooks()
+// without changing any caller. Sources are combined with UNION — any source
+// that says "screened" wins.
 
 import type { TenantTx } from "@/tenancy/withTenant";
 import type { PrivilegeTag } from "@/core/documents";

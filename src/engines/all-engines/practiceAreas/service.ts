@@ -10,7 +10,7 @@ import { PRACTICE_AREAS, enabledPracticeAreas, isPracticeAreaId, type PracticeAr
 import type { Actor } from "@/core/audit";
 import type { TenantTx } from "@/tenancy/withTenant";
 import { AllEnginesError } from "../common/errors";
-import { FIRM, assertCan } from "../permissions/policy";
+import { FIRM, assertCan } from "@/core/permissions";
 import { logAccessChange, type StaffContext } from "../permissions/service";
 import { availablePracticeAreaIds, getPack, packContentHash } from "../packs/registry";
 import type { PracticeAreaPack } from "../packs/types";

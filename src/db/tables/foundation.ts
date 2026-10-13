@@ -37,6 +37,7 @@ import {
   index,
   uniqueIndex,
   check,
+  pgView,
 } from "drizzle-orm/pg-core";
 import { firms, users, matters, parties, intakeSessions } from "../schema";
 import type {
@@ -443,6 +444,153 @@ export const complianceApprovals = pgTable("compliance_approvals", {
     sql`${table.reviewerKind} in ('attorney','cpa','vendor_dpa','founder_decision')`
   ),
 ]);
+
+// ---------------------------------------------------------------------------
+// Roles and capabilities (wave 3: moved here from tables/platform.ts and
+// tables/all-engines.ts, unchanged, so src/core/permissionActor.ts can resolve
+// an actor's roles without importing an engine's table file. Same SQL tables;
+// no schema change.)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// c34 — capabilities layered on top of users.role
+// ---------------------------------------------------------------------------
+
+/**
+ * Extra capabilities granted to a user on top of their role (see
+ * src/auth/rbac.ts). History is kept: a revoke sets revokedAt + reason, and a
+ * fresh grant inserts a new row.
+ */
+export const userCapabilities = pgTable("user_capabilities", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  /** 'conflicts_attorney' | 'bookkeeper'. */
+  capability: text("capability").notNull(),
+  grantedByUserId: uuid("granted_by_user_id").references(() => users.id),
+  grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+  grantReason: text("grant_reason").notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  revokedByUserId: uuid("revoked_by_user_id").references(() => users.id),
+  revokeReason: text("revoke_reason"),
+}, (table) => [
+  index("user_capabilities_tenant_user_idx").on(table.tenantId, table.userId),
+  uniqueIndex("user_capabilities_active_key")
+    .on(table.tenantId, table.userId, table.capability)
+    .where(sql`${table.revokedAt} is null`),
+  check("user_capabilities_capability_check", sql`${table.capability} in ('conflicts_attorney','bookkeeper')`),
+  check(
+    "user_capabilities_revoke_reason_check",
+    sql`${table.revokedAt} is null or ${table.revokeReason} is not null`
+  ),
+]);
+
+/** Staff roles a row may name (client is never stored: portal access comes from the matter). Keep in sync with FIRM_ROLES in src/core/permissions.ts. */
+const STAFF_ROLE_SQL = sql.raw(
+  "('owner','admin','lawyer','paralegal','intake_staff','bookkeeper','conflicts_attorney','read_only')"
+);
+
+// ---------------------------------------------------------------------------
+// c99 — per-firm overrides of the role × right matrix
+// ---------------------------------------------------------------------------
+
+/**
+ * One row per (role, right) the firm changed from the product default. Only
+ * real differences are stored (setting a cell back to its default deletes
+ * the row). Every change is written to access_change_log first.
+ */
+export const permissionOverrides = pgTable("permission_overrides", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  role: text("role").notNull(),
+  /** A right key from RIGHTS (src/core/permissions.ts), e.g. 'conflicts.party_index'. */
+  right: text("right").notNull(),
+  /** 'grant' | 'deny'. */
+  effect: text("effect").notNull(),
+  reason: text("reason").notNull(),
+  updatedByUserId: uuid("updated_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("permission_overrides_role_right_key").on(t.tenantId, t.role, t.right),
+  check("permission_overrides_effect_check", sql`${t.effect} in ('grant','deny')`),
+  check("permission_overrides_role_check", sql`${t.role} in ${STAFF_ROLE_SQL}`),
+]);
+
+// ---------------------------------------------------------------------------
+// c99 — product roles assigned on top of the c34 account role
+// ---------------------------------------------------------------------------
+
+/**
+ * Roles beyond what users.role (+ c34 capabilities) implies: owner,
+ * paralegal, extra bookkeeper / conflicts-attorney designations. History is
+ * kept: revoking sets revokedAt + reason, a new grant inserts a new row.
+ */
+export const firmRoleAssignments = pgTable("firm_role_assignments", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  role: text("role").notNull(),
+  grantedByUserId: uuid("granted_by_user_id").references(() => users.id),
+  grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+  grantReason: text("grant_reason").notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  revokedByUserId: uuid("revoked_by_user_id").references(() => users.id),
+  revokeReason: text("revoke_reason"),
+}, (t) => [
+  index("firm_role_assignments_tenant_user_idx").on(t.tenantId, t.userId),
+  uniqueIndex("firm_role_assignments_active_key").on(t.tenantId, t.userId, t.role).where(sql`${t.revokedAt} is null`),
+  check("firm_role_assignments_role_check", sql`${t.role} in ${STAFF_ROLE_SQL}`),
+  check("firm_role_assignments_revoke_reason_check", sql`${t.revokedAt} is null or ${t.revokeReason} is not null`),
+]);
+
+
+// ---------------------------------------------------------------------------
+// Ethical screens, shared read model (wave 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every ethical screen in force, whichever engine recorded it: a VIEW (not a
+ * table) over the two places screens are written today, so there is nothing
+ * to keep in sync and no second copy to drift:
+ *   - conflict_screens (conflict-check, c60) with status 'requested' or
+ *     'active'. A requested screen already screens: conflict-check's own
+ *     reader treats anything not 'lifted' as screened (fail closed);
+ *   - document_access_blocks (document, c84) that are open (ended_at null)
+ *     and have reason 'ethical_screen'. 'restricted'/'other' blocks only
+ *     hide documents and stay local to the document engine.
+ * Intake-session screens (matter_id null) are included; matter readers
+ * filter on matter_id.
+ *
+ * security_invoker = true, so the caller's RLS on both base tables applies
+ * (tenant isolation comes from the base tables, not the view). Read it only
+ * through src/core/screens.ts. SELECT-only for app_runtime (see 0007).
+ */
+export const activeEthicalScreens = pgView("active_ethical_screens", {
+  tenantId: uuid("tenant_id").notNull(),
+  userId: uuid("user_id").notNull(),
+  matterId: uuid("matter_id"),
+  intakeSessionId: uuid("intake_session_id"),
+  /** 'conflict_screen' | 'document_access_block'. */
+  source: text("source").notNull(),
+  /** conflict_screens.id or document_access_blocks.id. */
+  sourceId: uuid("source_id").notNull(),
+  /** conflict_screens.status ('requested' | 'active'), or 'active' for a block. */
+  status: text("status").notNull(),
+  since: timestamp("since", { withTimezone: true }).notNull(),
+})
+  .with({ securityInvoker: true })
+  .as(sql`
+    select cs.tenant_id, cs.screened_user_id as user_id, cs.matter_id, cs.intake_session_id,
+           'conflict_screen'::text as source, cs.id as source_id, cs.status, cs.created_at as since
+      from conflict_screens cs
+     where cs.status in ('requested', 'active')
+    union all
+    select b.tenant_id, b.user_id, b.matter_id, null::uuid as intake_session_id,
+           'document_access_block'::text as source, b.id as source_id, 'active'::text as status, b.created_at as since
+      from document_access_blocks b
+     where b.ended_at is null and b.reason = 'ethical_screen'
+  `);
 
 // ---------------------------------------------------------------------------
 // MIGRATION NOTES for the integration step (hand-add to the generated SQL):
