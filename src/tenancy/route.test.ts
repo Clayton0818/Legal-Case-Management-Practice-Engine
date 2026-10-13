@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { errorResponse, HttpError } from "./route";
+import { FlagNotFoundError } from "@/core/flags";
 import { defineGate, requireApproval, resetApprovalStateForTests, setBlockedActionSink } from "@/compliance/approvals";
 
 const GATE = defineGate({ key: "test.route.gate", cardIds: [], reviewers: ["cpa"], description: "Route test gate" });
@@ -31,5 +32,10 @@ describe("errorResponse", () => {
     expect(res.status).toBe(500);
     expect(JSON.stringify(await res.json())).not.toContain("secret");
     spy.mockRestore();
+  });
+
+  it("maps a missing flag to 404", async () => {
+    const res = errorResponse("t", new FlagNotFoundError("f-1", "acknowledgeFlag", false));
+    expect(res.status).toBe(404);
   });
 });

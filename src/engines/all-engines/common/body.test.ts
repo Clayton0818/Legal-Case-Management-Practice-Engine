@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PendingApprovalError, defineGate, gateStatus, resetApprovalStateForTests } from "@/compliance/approvals";
-import { PermissionDeniedError } from "../permissions/policy";
+import { PermissionDeniedError } from "@/core/permissions";
 import { isUuid, optString, readBody, reqBool, reqString, reqStringList, reqUuid } from "./body";
 import { AllEnginesError, mapHandledError } from "./errors";
 

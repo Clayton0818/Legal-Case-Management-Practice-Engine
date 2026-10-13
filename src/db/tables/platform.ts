@@ -7,7 +7,7 @@
 // so every read below runs inside withTenant(tenantId) under RLS.
 
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, text, boolean, timestamp, index, uniqueIndex, check } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { firms, users } from "../schema";
 
 // ---------------------------------------------------------------------------
@@ -33,39 +33,6 @@ export const authIdentities = pgTable("auth_identities", {
 }, (table) => [
   uniqueIndex("auth_identities_provider_subject_key").on(table.tenantId, table.provider, table.subject),
   index("auth_identities_tenant_user_idx").on(table.tenantId, table.userId),
-]);
-
-// ---------------------------------------------------------------------------
-// c34 — capabilities layered on top of users.role
-// ---------------------------------------------------------------------------
-
-/**
- * Extra capabilities granted to a user on top of their role (see
- * src/auth/rbac.ts). History is kept: a revoke sets revokedAt + reason, and a
- * fresh grant inserts a new row.
- */
-export const userCapabilities = pgTable("user_capabilities", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
-  userId: uuid("user_id").notNull().references(() => users.id),
-  /** 'conflicts_attorney' | 'bookkeeper'. */
-  capability: text("capability").notNull(),
-  grantedByUserId: uuid("granted_by_user_id").references(() => users.id),
-  grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
-  grantReason: text("grant_reason").notNull(),
-  revokedAt: timestamp("revoked_at", { withTimezone: true }),
-  revokedByUserId: uuid("revoked_by_user_id").references(() => users.id),
-  revokeReason: text("revoke_reason"),
-}, (table) => [
-  index("user_capabilities_tenant_user_idx").on(table.tenantId, table.userId),
-  uniqueIndex("user_capabilities_active_key")
-    .on(table.tenantId, table.userId, table.capability)
-    .where(sql`${table.revokedAt} is null`),
-  check("user_capabilities_capability_check", sql`${table.capability} in ('conflicts_attorney','bookkeeper')`),
-  check(
-    "user_capabilities_revoke_reason_check",
-    sql`${table.revokedAt} is null or ${table.revokeReason} is not null`
-  ),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -95,6 +62,8 @@ export const widgetEmbeds = pgTable("widget_embeds", {
 
 // ---------------------------------------------------------------------------
 // MIGRATION NOTES for the integration step (hand-add to the generated SQL):
+// (user_capabilities moved to ./foundation.ts in wave 3; same SQL table, the
+// notes below still describe how it was migrated in 0003.)
 //
 // 1. RLS + tenant_isolation policy (same text as migrations/0000) on:
 //    auth_identities, user_capabilities, widget_embeds.

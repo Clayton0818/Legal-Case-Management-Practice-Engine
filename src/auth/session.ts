@@ -5,7 +5,9 @@
 
 import { and, eq, isNull } from "drizzle-orm";
 import { users } from "@/db/schema";
-import { authIdentities, userCapabilities } from "@/db/tables/platform";
+import { authIdentities } from "@/db/tables/platform";
+import { userCapabilities } from "@/db/tables/foundation";
+import { activeCapabilities } from "@/core/permissionActor";
 import type { TenantTx } from "@/tenancy/withTenant";
 import { audit } from "@/core/audit";
 import type { Env } from "./config";
@@ -35,14 +37,9 @@ async function getUserRow(tx: TenantTx, tenantId: string, userId: string): Promi
   return u;
 }
 
+/** Active capabilities of a user (reads through the core API, src/core/permissionActor.ts). */
 export async function listActiveCapabilities(tx: TenantTx, tenantId: string, userId: string): Promise<Capability[]> {
-  const rows = await tx
-    .select({ capability: userCapabilities.capability })
-    .from(userCapabilities)
-    .where(
-      and(eq(userCapabilities.tenantId, tenantId), eq(userCapabilities.userId, userId), isNull(userCapabilities.revokedAt))
-    );
-  return rows.map((r) => r.capability as Capability);
+  return (await activeCapabilities(tx, tenantId, userId)) as Capability[];
 }
 
 /** Resolve the Principal for a verified identity. Throws AuthError(403) when no active user is linked. */

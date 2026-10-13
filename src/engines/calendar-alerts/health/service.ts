@@ -8,7 +8,7 @@ import { matters, parties } from "@/db/schema";
 import { calendarEvents, flags, tasks } from "@/db/tables/foundation";
 import { clientChaseLadders, clientMessages, clientUpdates, matterHealthSnapshots, replyClocks, stallWatches } from "@/db/tables/calendar-alerts";
 import type { TenantTx } from "@/tenancy/withTenant";
-import { addBusinessHours, businessHoursBetween } from "@/core/businessHours";
+import { addBusinessDays, businessDaysBetween } from "@/core/businessHours";
 import { audit } from "@/core/audit";
 import { toBusinessCalendar } from "@/core/firmSettings";
 import { resolveFlag } from "@/core/flags";
@@ -19,7 +19,6 @@ import { computeHealth, fallingSharply, rankValue, shouldRaiseHealthFlag, type H
 
 export type SnapshotRow = typeof matterHealthSnapshots.$inferSelect;
 
-const DAY_BH = 8;
 const DAY_MS = 86_400_000;
 
 export function healthFlagKey(matterId: string): string {
@@ -76,9 +75,9 @@ export async function gatherSignals(tx: TenantTx, ctx: EngineContext, tenantId: 
   const latest = (...ds: Array<Date | null>) => ds.filter((d): d is Date => d !== null).sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
   const updateAt = latest(asDate(lastUpdate?.at), asDate(lastHumanReply?.at)) ?? matter.openedAt;
   const clientAt = asDate(lastInbound?.at) ?? matter.openedAt;
-  const bd = (from: Date) => Math.max(0, businessHoursBetween(from, now, cal) / DAY_BH);
+  const bd = (from: Date) => Math.max(0, businessDaysBetween(from, now, cal));
 
-  const windowEnd = addBusinessHours(now, h.deadlineWindowBusinessDays * DAY_BH, cal);
+  const windowEnd = addBusinessDays(now, h.deadlineWindowBusinessDays, cal);
   const [near] = await tx
     .select({ n: sql<number>`count(*)::int` })
     .from(calendarEvents)
@@ -123,7 +122,7 @@ export async function computeMatterHealth(tx: TenantTx, ctx: EngineContext, tena
     .where(and(eq(matterHealthSnapshots.tenantId, tenantId), eq(matterHealthSnapshots.matterId, matterId), gte(matterHealthSnapshots.computedAt, new Date(now.getTime() - 120 * DAY_MS))))
     .orderBy(desc(matterHealthSnapshots.computedAt))
     .limit(400);
-  const inWindow = history.filter((s) => businessHoursBetween(s.computedAt, now, cal) <= h.trendWindowBusinessDays * DAY_BH);
+  const inWindow = history.filter((s) => businessDaysBetween(s.computedAt, now, cal) <= h.trendWindowBusinessDays);
   const falling = fallingSharply(result.score, inWindow.map((s) => s.score), h);
   const unhealthy = result.band === "red" || falling;
   const { multiplierPct, rank } = rankValue(result.score, deadlineNear, h);
@@ -134,7 +133,7 @@ export async function computeMatterHealth(tx: TenantTx, ctx: EngineContext, tena
     if (s.band === "red" || s.falling) break;
     runStart = s.computedAt;
   }
-  const healthyRun = runStart && history[0] && !(history[0].band === "red" || history[0].falling) ? businessHoursBetween(runStart, now, cal) / DAY_BH : 0;
+  const healthyRun = runStart && history[0] && !(history[0].band === "red" || history[0].falling) ? businessDaysBetween(runStart, now, cal) : 0;
 
   const [openFlag] = await tx.select({ id: flags.id }).from(flags).where(and(eq(flags.tenantId, tenantId), eq(flags.dedupeKey, healthFlagKey(matterId)), isNull(flags.resolvedAt))).limit(1);
   const [lastResolved] = await tx

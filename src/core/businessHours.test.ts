@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
+  addBusinessDays,
   addBusinessHours,
   addBusinessMinutes,
   addClockHours,
+  businessDaysBetween,
   businessHoursBetween,
   endOfQuietTime,
   fromLocal,
@@ -205,5 +207,86 @@ describe("quiet hours", () => {
     expect(endOfQuietTime(chi(2026, 9, 25, 22), quiet, "America/Chicago")).toEqual(chi(2026, 9, 26, 8));
     expect(endOfQuietTime(chi(2026, 9, 26, 6), quiet, "America/Chicago")).toEqual(chi(2026, 9, 26, 8));
     expect(endOfQuietTime(chi(2026, 9, 26, 12), quiet, "America/Chicago")).toEqual(chi(2026, 9, 26, 12));
+  });
+});
+
+describe("addBusinessDays", () => {
+  // 2026-06-29 is a Monday; Friday 2026-07-03 is a holiday on texasFirm.
+  it("keeps the wall-clock time and skips weekends and holidays", () => {
+    expect(addBusinessDays(chi(2026, 6, 29, 10, 30), 1, texasFirm)).toEqual(chi(2026, 6, 30, 10, 30));
+    expect(addBusinessDays(chi(2026, 7, 2, 10, 30), 1, texasFirm)).toEqual(chi(2026, 7, 6, 10, 30)); // Thu → Mon (Fri holiday)
+    expect(addBusinessDays(chi(2026, 6, 29, 10, 30), 5, texasFirm)).toEqual(chi(2026, 7, 7, 10, 30));
+    expect(addBusinessDays(chi(2026, 6, 29, 10, 30), 0, texasFirm)).toEqual(chi(2026, 6, 29, 10, 30));
+  });
+
+  it("counts a start outside business hours from the previous close", () => {
+    expect(addBusinessDays(chi(2026, 6, 26, 18), 1, texasFirm)).toEqual(chi(2026, 6, 29, 17)); // Fri 6pm → Mon close
+    expect(addBusinessDays(chi(2026, 6, 27, 12), 1, texasFirm)).toEqual(chi(2026, 6, 29, 17)); // Saturday → Mon close
+    expect(addBusinessDays(chi(2026, 6, 29, 7), 1, texasFirm)).toEqual(chi(2026, 6, 29, 17)); // Mon 7am (= Fri close) → Mon close
+  });
+
+  it("follows the firm's own day length instead of assuming 8 hours", () => {
+    const nineToSix = [{ start: "09:00", end: "18:00" }];
+    const longDays: BusinessCalendar = { timeZone: "America/Chicago", weekly: { mon: nineToSix, tue: nineToSix, wed: nineToSix, thu: nineToSix, fri: nineToSix }, holidays: [] };
+    expect(addBusinessDays(chi(2026, 6, 29, 10), 1, longDays)).toEqual(chi(2026, 6, 30, 10));
+    // the old approximation (8 business hours) landed on the same day:
+    expect(addBusinessHours(chi(2026, 6, 29, 10), 8, longDays)).toEqual(chi(2026, 6, 29, 18));
+  });
+
+  it("clamps into a shorter day (half-day Friday) and across a lunch break", () => {
+    const halfFriday: BusinessCalendar = {
+      timeZone: "America/Chicago",
+      weekly: { mon: nineToFive, tue: nineToFive, wed: nineToFive, thu: [{ start: "09:00", end: "12:00" }, { start: "13:00", end: "17:00" }], fri: [{ start: "09:00", end: "12:00" }] },
+      holidays: [],
+    };
+    expect(addBusinessDays(chi(2026, 7, 2, 15), 1, halfFriday)).toEqual(chi(2026, 7, 3, 12)); // Thu 3pm → Fri close (noon)
+    expect(addBusinessDays(chi(2026, 7, 1, 12, 30), 1, halfFriday)).toEqual(chi(2026, 7, 2, 12)); // Wed 12:30 → Thu lunch → Thu noon close
+  });
+
+  it("is business-equivalent to the old 8-hour approximation on a 9–5 calendar", () => {
+    // Every quarter hour across two weeks: zero business hours between the two answers.
+    for (let t = chi(2026, 6, 22).getTime(); t < chi(2026, 7, 6).getTime(); t += 15 * 60_000) {
+      for (const days of [1, 2, 5]) {
+        const start = new Date(t);
+        const viaDays = addBusinessDays(start, days, texasFirm);
+        const viaHours = addBusinessHours(start, days * 8, texasFirm);
+        expect(Math.abs(businessHoursBetween(viaDays, viaHours, texasFirm)), `${start.toISOString()} +${days}`).toBe(0);
+      }
+    }
+  });
+
+  it("handles 24:00 closes and DST", () => {
+    expect(addBusinessDays(chi(2026, 3, 7, 12), 1, alwaysOpen)).toEqual(chi(2026, 3, 8, 12)); // spring-forward Sunday
+    expect(addBusinessDays(chi(2026, 11, 1, 1, 30), 1, alwaysOpen)).toEqual(chi(2026, 11, 2, 1, 30));
+    const lateWeek: BusinessCalendar = { timeZone: "America/Chicago", weekly: { fri: [{ start: "09:00", end: "24:00" }], mon: [{ start: "09:00", end: "24:00" }] }, holidays: [] };
+    expect(addBusinessDays(chi(2026, 6, 27, 0, 30), 1, lateWeek)).toEqual(chi(2026, 6, 30, 0, 0)); // Sat 00:30 = Fri close → Mon close (24:00)
+  });
+
+  it("rejects fractional or negative days", () => {
+    expect(() => addBusinessDays(chi(2026, 6, 29, 10), 1.5, texasFirm)).toThrow(/whole number/);
+    expect(() => addBusinessDays(chi(2026, 6, 29, 10), -1, texasFirm)).toThrow(/whole number/);
+  });
+});
+
+describe("businessDaysBetween", () => {
+  it("counts each business day as 1 whatever its length", () => {
+    expect(businessDaysBetween(chi(2026, 6, 29, 9), chi(2026, 6, 30, 9), texasFirm)).toBe(1);
+    expect(businessDaysBetween(chi(2026, 6, 29, 13), chi(2026, 6, 29, 17), texasFirm)).toBe(0.5);
+    expect(businessDaysBetween(chi(2026, 6, 26, 17), chi(2026, 7, 6, 17), texasFirm)).toBe(5); // Fri→Mon+1wk, holiday skipped
+    expect(businessDaysBetween(chi(2026, 6, 30, 9), chi(2026, 6, 29, 9), texasFirm)).toBe(-1);
+    const halfFriday: BusinessCalendar = { timeZone: "America/Chicago", weekly: { thu: nineToFive, fri: [{ start: "09:00", end: "12:00" }] }, holidays: [] };
+    expect(businessDaysBetween(chi(2026, 7, 2, 9), chi(2026, 7, 3, 12), halfFriday)).toBe(2);
+  });
+
+  it("equals business hours / 8 on a 9–5 calendar (the old approximation)", () => {
+    const a = chi(2026, 6, 23, 11, 15);
+    for (const b of [chi(2026, 6, 23, 16), chi(2026, 6, 26, 10, 45), chi(2026, 7, 8, 14)]) {
+      expect(businessDaysBetween(a, b, texasFirm)).toBeCloseTo(businessHoursBetween(a, b, texasFirm) / 8, 10);
+    }
+  });
+
+  it("is consistent with addBusinessDays", () => {
+    const start = chi(2026, 6, 29, 10, 30);
+    for (const n of [1, 3, 10]) expect(businessDaysBetween(start, addBusinessDays(start, n, texasFirm), texasFirm)).toBeCloseTo(n, 10);
   });
 });

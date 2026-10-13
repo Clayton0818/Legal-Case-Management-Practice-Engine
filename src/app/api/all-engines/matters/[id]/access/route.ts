@@ -1,7 +1,7 @@
 import { allEnginesRoute } from "@/app/api/all-engines/_lib/route";
 import { isUuid, readBody, reqBool, reqString } from "@/engines/all-engines/common/body";
 import { AllEnginesError } from "@/engines/all-engines/common/errors";
-import { FIRM, decide } from "@/engines/all-engines/permissions/policy";
+import { FIRM, decide } from "@/core/permissions";
 import { loadMatterRef, setMatterRestricted } from "@/engines/all-engines/permissions/service";
 
 export const dynamic = "force-dynamic";

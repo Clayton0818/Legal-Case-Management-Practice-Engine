@@ -17,6 +17,7 @@ export const ENGINE_SLUGS = [
   "billing-trust",
   "all-engines",
   "platform",
+  "demo",
 ] as const;
 
 export type EngineSlug = (typeof ENGINE_SLUGS)[number];
@@ -33,6 +34,7 @@ export const ENGINE_INFO: Readonly<Record<EngineSlug, { label: string; cards: st
   "billing-trust": { label: "Billing & trust engine", cards: "c50, c52, c75–c83" },
   "all-engines": { label: "All engines (cross-cutting)", cards: "c98–c105" },
   platform: { label: "Platform (auth, ops queue, widget)", cards: "c34, c35, c37, c38" },
+  demo: { label: "Demo (fictional demo firm, reset, walkthrough)", cards: "c106" },
 };
 
 export function isEngineSlug(value: unknown): value is EngineSlug {

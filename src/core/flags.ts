@@ -20,6 +20,29 @@ import { clientVisible, type FlagAudience } from "./visibility";
 
 export { clientVisible, isClientVisible, assertClientVisible, type FlagAudience } from "./visibility";
 
+/**
+ * The flag does not exist in this firm, or (for resolve/escalate) is no longer
+ * open. Engines catch THIS class instead of matching on the message text,
+ * e.g. "already resolved by a person: nothing more to clear".
+ */
+export class FlagNotFoundError extends Error {
+  constructor(
+    readonly flagId: string,
+    /** Which operation looked for it. */
+    readonly operation: "resolveFlag" | "acknowledgeFlag" | "escalateFlag",
+    /** True when the lookup was for an OPEN flag (resolve/escalate). */
+    readonly openOnly: boolean
+  ) {
+    // Message kept identical to the pre-wave-3 text so logs stay comparable.
+    super(`${operation}: ${openOnly ? "open " : ""}flag ${flagId} not found.`);
+    this.name = "FlagNotFoundError";
+  }
+}
+
+export function isFlagNotFound(err: unknown): err is FlagNotFoundError {
+  return err instanceof FlagNotFoundError;
+}
+
 export type FlagSeverity = "info" | "warning" | "high" | "critical";
 export const FLAG_SEVERITIES: readonly FlagSeverity[] = ["info", "warning", "high", "critical"];
 export type FlagRow = typeof flags.$inferSelect;
@@ -268,7 +291,7 @@ export async function resolveFlag(
     })
     .where(and(eq(flags.tenantId, input.tenantId), eq(flags.id, input.flagId), isNull(flags.resolvedAt)))
     .returning();
-  if (!row) throw new Error(`resolveFlag: open flag ${input.flagId} not found.`);
+  if (!row) throw new FlagNotFoundError(input.flagId, "resolveFlag", true);
   await audit(tx, {
     tenantId: input.tenantId,
     engine: input.engine ?? "core",
@@ -309,7 +332,7 @@ export async function acknowledgeFlag(
     .set({ acknowledgedAt: input.at ?? new Date(), acknowledgedByUserId: input.userId })
     .where(and(eq(flags.tenantId, input.tenantId), eq(flags.id, input.flagId)))
     .returning();
-  if (!row) throw new Error(`acknowledgeFlag: flag ${input.flagId} not found.`);
+  if (!row) throw new FlagNotFoundError(input.flagId, "acknowledgeFlag", false);
   await audit(tx, {
     tenantId: input.tenantId,
     engine: input.engine ?? "core",
@@ -345,7 +368,7 @@ export async function escalateFlag(
     .from(flags)
     .where(and(eq(flags.tenantId, input.tenantId), eq(flags.id, input.flagId), isNull(flags.resolvedAt)))
     .limit(1);
-  if (!current) throw new Error(`escalateFlag: open flag ${input.flagId} not found.`);
+  if (!current) throw new FlagNotFoundError(input.flagId, "escalateFlag", true);
   const newUserIds = [...new Set(input.addUserIds)].filter((id) => !current.recipientUserIds.includes(id));
   const severity =
     input.severity && FLAG_SEVERITIES.indexOf(input.severity) > FLAG_SEVERITIES.indexOf(current.severity as FlagSeverity)

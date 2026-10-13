@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_CLIENT_FLAG_COPY,
+  FlagNotFoundError,
   INTERNAL_FLAG_TEMPLATE,
+  isFlagNotFound,
   planFlagNotifications,
   validateFlagInput,
   type RaiseFlagInput,
@@ -120,5 +122,16 @@ describe("visibility boundary (clientVisible)", () => {
   it("assertClientVisible throws when an internal row reaches a client path", () => {
     expect(() => assertClientVisible(flags)).toThrow(/Visibility violation: 2/);
     expect(assertClientVisible([{ audience: "both" }])).toHaveLength(1);
+  });
+});
+
+describe("FlagNotFoundError", () => {
+  it("is a typed error engines can catch without matching the message", () => {
+    const err = new FlagNotFoundError("f-1", "resolveFlag", true);
+    expect(err).toBeInstanceOf(Error);
+    expect(isFlagNotFound(err)).toBe(true);
+    expect(isFlagNotFound(new Error("something not found"))).toBe(false);
+    expect(err.message).toBe("resolveFlag: open flag f-1 not found.");
+    expect(new FlagNotFoundError("f-2", "acknowledgeFlag", false).message).toBe("acknowledgeFlag: flag f-2 not found.");
   });
 });

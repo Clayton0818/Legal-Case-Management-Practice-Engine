@@ -38,7 +38,7 @@ describe("documents vocabulary", () => {
 
 describe("engines", () => {
   it("lists the eight engine slugs (seven engines + platform)", () => {
-    expect(ENGINE_SLUGS).toHaveLength(8);
+    expect(ENGINE_SLUGS).toHaveLength(9);
     expect(isEngineSlug("platform")).toBe(true);
     expect(isEngineSlug("billing-trust")).toBe(true);
     expect(isEngineSlug("billing")).toBe(false);

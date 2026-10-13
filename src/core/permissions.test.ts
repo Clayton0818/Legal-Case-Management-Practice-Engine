@@ -24,7 +24,7 @@ import {
   type PermissionOverride,
   type PolicyActor,
   type RightDef,
-} from "./policy";
+} from "./permissions";
 
 const U1 = "00000000-0000-4000-8000-000000000001";
 const U2 = "00000000-0000-4000-8000-000000000002";
@@ -457,9 +457,9 @@ describe("role assignment", () => {
 });
 
 describe("self-containment (so the Foundation can move this file into src/core as a copy)", () => {
-  it("policy.ts imports nothing", async () => {
+  it("permissions.ts imports nothing", async () => {
     const { readFileSync } = await import("node:fs");
-    const src = readFileSync(new URL("./policy.ts", import.meta.url), "utf8");
+    const src = readFileSync(new URL("./permissions.ts", import.meta.url), "utf8");
     expect(src).not.toMatch(/^\s*import\s/m);
     expect(src).not.toMatch(/require\(/);
   });

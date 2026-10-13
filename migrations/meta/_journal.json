@@ -50,6 +50,20 @@
       "when": 1791504000000,
       "tag": "0006_revoke_execute_on_trust_trigger_functions",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791507600000,
+      "tag": "0007_foundation_permissions_screens_doc_freeze",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791738319803,
+      "tag": "0008_demo_tenants",
+      "breakpoints": true
     }
   ]
 }

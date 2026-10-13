@@ -19,7 +19,7 @@ import type { TenantTx } from "@/tenancy/withTenant";
 import { isApproved, runGated } from "@/compliance/approvals";
 import { audit } from "@/core/audit";
 import { toBusinessCalendar } from "@/core/firmSettings";
-import { acknowledgeFlag, escalateFlag, resolveFlag } from "@/core/flags";
+import { acknowledgeFlag, escalateFlag, isFlagNotFound, resolveFlag } from "@/core/flags";
 import { activeUserIds, AlertRuleError, backupFor, getMatter, loadPeople, markJobRun, raiseAlert, responsibleLawyer, type EngineContext, type Staff } from "../common";
 import { ALERT_RULE_GATES } from "../gates";
 import { FLAG_TYPES } from "../kinds";
@@ -364,7 +364,7 @@ export async function processNoticeEscalations(tx: TenantTx, ctx: EngineContext,
       engine: ENGINE,
       at: now,
     }).catch((err: unknown) => {
-      if (!(err instanceof Error && /not found/.test(err.message))) throw err;
+      if (!isFlagNotFound(err)) throw err;
     });
     await tx.update(courtNotices).set({ escalationStep: target }).where(and(eq(courtNotices.tenantId, tenantId), eq(courtNotices.id, n.id)));
     await audit(tx, { tenantId, engine: ENGINE, action: "court_notice.escalated", entityType: "court_notice", entityId: n.id, matterId: n.matterId, payload: { step: target, added: add.length } });
@@ -417,7 +417,7 @@ export async function fileNoticeToMatter(tx: TenantTx, ctx: EngineContext, input
   // The responsible lawyer still has to see it: replace the admin-queue alert with a matter alert.
   if (n.alertFlagId && n.status === "unmatched") {
     await resolveFlag(tx, { tenantId: input.tenantId, flagId: n.alertFlagId, by, reason: "Filed to a matter; the matter's lawyer was alerted", engine: ENGINE, at: input.now }).catch((err: unknown) => {
-      if (!(err instanceof Error && /not found/.test(err.message))) throw err;
+      if (!isFlagNotFound(err)) throw err;
     });
     const flagId = await alertForNotice(tx, ctx, row!, input.now);
     const [withFlag] = await tx.update(courtNotices).set({ alertFlagId: flagId, escalationStep: 0 }).where(and(eq(courtNotices.tenantId, input.tenantId), eq(courtNotices.id, n.id))).returning();
@@ -437,7 +437,7 @@ export async function dismissNotice(tx: TenantTx, input: { tenantId: string; not
   const by = { type: "user" as const, userId: input.staff.userId };
   if (n.alertFlagId) {
     await resolveFlag(tx, { tenantId: input.tenantId, flagId: n.alertFlagId, by, reason: `Dismissed: ${reason}`, engine: ENGINE, at: input.now }).catch((err: unknown) => {
-      if (!(err instanceof Error && /not found/.test(err.message))) throw err;
+      if (!isFlagNotFound(err)) throw err;
     });
   }
   await audit(tx, { tenantId: input.tenantId, engine: ENGINE, action: "court_notice.dismissed", entityType: "court_notice", entityId: n.id, matterId: n.matterId, actor: by, reason });

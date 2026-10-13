@@ -1,10 +1,10 @@
 // c99 — detailed permissions for each role. THE policy layer.
 //
-// Pure and SELF-CONTAINED on purpose: this file imports nothing (not even
-// @/core), so the Foundation can move it to src/core/permissions.ts as a
-// straight copy and every engine and tenantRoute can call
-// `can(actor, right, resource)` without importing this engine (see
-// docs/product/features/all-engines/c99-permissions.md, "Foundation requests").
+// Pure and SELF-CONTAINED on purpose: this file imports nothing. Written by
+// the all-engines engine (c99) and moved here unchanged in wave 3, so every
+// engine and tenantRoute({ right }) call the same `can(actor, right,
+// resource)`. Roles are resolved from the database by ./permissionActor.ts;
+// screens come from ./screens.ts.
 //
 // Model
 //   effectiveRights(actor) = ⋃ ROLE DEFAULTS of every role the actor holds

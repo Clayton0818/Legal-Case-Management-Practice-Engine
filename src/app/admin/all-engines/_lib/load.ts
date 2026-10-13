@@ -16,7 +16,7 @@ export async function withStaff<T>(
         import("@/tenancy/withTenant"),
         import("@/compliance/server"),
         import("@/engines/all-engines/permissions/service"),
-        import("@/engines/all-engines/permissions/policy"),
+        import("@/core/permissions"),
       ]);
     await ensureServerApprovals();
     const tenantId = await resolveRequestTenantId();

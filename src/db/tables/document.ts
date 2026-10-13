@@ -388,7 +388,9 @@ export const documentRetentionRules = pgTable("document_retention_rules", {
 //        GRANT UPDATE (scan_status, scan_detail, scanned_at, quarantined_at, last_verified_at)
 //          ON document_version_files TO app_runtime;
 //
-// 3. Shared `documents` table (schema.ts — FOUNDATION REQUEST, not done here):
+// 3. Shared `documents` table (schema.ts — FOUNDATION REQUEST, DONE in
+//    migrations/0007 as trigger documents_version_content_frozen, which also
+//    freezes tenant_id, plus REVOKE DELETE, TRUNCATE):
 //    a BEFORE UPDATE trigger that rejects changes to storage_key, sha256,
 //    size_bytes, mime_type, version, version_group_id, matter_id once set,
 //    so a version's content can never be overwritten in place; and
