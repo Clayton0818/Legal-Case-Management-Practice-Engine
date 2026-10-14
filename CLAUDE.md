@@ -10,11 +10,11 @@ A generic, commercial legal **case management** platform: conversational intake 
 
 ## Source of truth for status
 
-The [Legal Intake Build](https://claude.ai/code/artifact/c002dcf5-570b-4d92-9afd-9cde9d8daa3e) kanban board, not this file and not any status comment in code. Read it with the Artifact tool (`action: "read"`) before assuming what's done, in progress, or next.
+The [Legal Case Management Engine](https://claude.ai/code/artifact/c002dcf5-570b-4d92-9afd-9cde9d8daa3e) kanban board, not this file and not any status comment in code. Read it with the Artifact tool (`action: "read"`) before assuming what's done, in progress, or next.
 
 It's a self-contained HTML page. Current state lives as JSON inside `<script id="state-data" type="application/json">`. Columns: `backlog`, `scoping`, `in-progress`, `review-qa`, `shipped`. Each card: `id`, `column`, `title`, `type` (`Founder`/`Compliance`/`Product`/`Engineering`/`Security`/`Go-to-Market`), `source` (priority `P0`/`P1`/`P2`), `date`, `note`, `order`, and optionally `pr` (a GitHub PR URL, once one exists for that card — shown as a "View PR ↗" link on the card) and `ref` (any supporting-material URL — shown as a "Reference ↗" link).
 
-To publish a board update: read the artifact, edit only the field(s) that actually changed in the JSON, and republish with the Artifact tool — `action: "publish"`, the same URL, `capabilities: {"artifact": {}}`, `title: "Legal Intake Build"`, `favicon: "🛠️"`. Never touch any other card or the page's structure.
+To publish a board update: read the artifact, edit only the field(s) that actually changed in the JSON, and republish with the Artifact tool — `action: "publish"`, the same URL, `capabilities: {"artifact": {}}`, `title: "Legal Case Management Engine"`, `favicon: "🛠️"`. Never touch any other card or the page's structure. The board's own name lives in two other places inside the page too — the `<title>` tag and the `<h1>` — plus the two JS template-string copies of each that the page's client-side code uses to re-render its own header; if the name is ever changed again, update all of those together with this instruction, or a later republish will silently revert the on-page name even though the Artifact tool's `title` argument is right.
 
 **Always merge onto the live version before publishing.** A publish that isn't built on the current live version is refused and hands back a saved copy — read it, diff the card state against yours, take live as the base, re-apply only your own edits, then publish. Never use `force: true` to get past a conflict: it silently discards whatever the other side did.
 
