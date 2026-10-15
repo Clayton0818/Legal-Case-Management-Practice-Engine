@@ -14,6 +14,8 @@
 //   document_access_log        append-only log of every view, download, search and denial
 //   document_access_blocks     local mirror of ethical screens (c60) until a shared screens table exists
 //   document_retention_rules   firm-entered retention periods (gated config; applied only via rules.retention_periods)
+//   document_checklist_templates  firm-set required-documents checklist per practice area (c49)
+//   document_checklist_items      one matter's required-documents checklist (c49)
 //
 // Conventions (./foundation.ts): NOT NULL tenantId -> firms.id on every
 // table, text + CHECK for statuses, timestamptz, indexes leading with
@@ -36,6 +38,7 @@ import {
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { firms, users, matters, parties, documents } from "../schema";
+import { tasks } from "./foundation";
 
 /** Postgres `tsvector`. Read as text if ever selected; normally only used in WHERE / ORDER BY. */
 const tsvector = customType<{ data: string }>({
@@ -135,6 +138,12 @@ export const documentFolders = pgTable("document_folders", {
  * version 1 (the shared table's version-group convention); every later
  * version is a NEW `documents` row with versionGroupId = groupDocumentId.
  * Bytes are never overwritten.
+ *
+ * `delivery*` columns (c40): whether THIS logical file has gone out to the
+ * client outside the platform's own e-signature/delivery flow (c4). A
+ * document delivered through that flow is marked 'sent' / 'platform'
+ * automatically by the code that drives it; everything else needs a human
+ * answer, which is what c40 asks for and records here.
  */
 export const documentGroups = pgTable("document_groups", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -150,14 +159,27 @@ export const documentGroups = pgTable("document_groups", {
   legalHoldReason: text("legal_hold_reason"),
   /** c90: an original paper document is held by the firm. */
   originalHeld: boolean("original_held").notNull().default(false),
+  /** c40. 'sent' | 'not_yet' | 'not_needed'. Starts 'not_yet' for every new file. */
+  deliveryStatus: text("delivery_status").notNull().default("not_yet"),
+  /** c40. How it went out once 'sent': 'platform' | 'email' | 'mail' | 'hand_delivery' | 'other'. Null until then. */
+  deliveryMethod: text("delivery_method"),
+  deliveryConfirmedAt: timestamp("delivery_confirmed_at", { withTimezone: true }),
+  deliveryConfirmedByUserId: uuid("delivery_confirmed_by_user_id").references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
 }, (t) => [
   uniqueIndex("document_groups_group_document_key").on(t.tenantId, t.groupDocumentId),
   index("document_groups_tenant_matter_idx").on(t.tenantId, t.matterId, t.folderId),
+  index("document_groups_tenant_delivery_idx").on(t.tenantId, t.matterId, t.deliveryStatus),
   check("document_groups_latest_version_check", sql`${t.latestVersion} >= 1`),
   check("document_groups_hold_reason_check", sql`not ${t.legalHold} or ${t.legalHoldReason} is not null`),
+  check("document_groups_delivery_status_check", sql`${t.deliveryStatus} in ('sent','not_yet','not_needed')`),
+  check(
+    "document_groups_delivery_method_check",
+    sql`${t.deliveryMethod} is null or ${t.deliveryMethod} in ('platform','email','mail','hand_delivery','other')`
+  ),
+  check("document_groups_delivery_confirmed_check", sql`${t.deliveryStatus} = 'not_yet' or ${t.deliveryConfirmedAt} is not null`),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -361,13 +383,128 @@ export const documentRetentionRules = pgTable("document_retention_rules", {
 ]);
 
 // ---------------------------------------------------------------------------
+// Required-documents checklist (c49)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape of `document_checklist_templates.items`. `key` is a stable machine
+ * name (e.g. 'marriage_certificate') so a matter's checklist can be extended
+ * when a firm edits its template without disturbing items already in
+ * progress. Validated by src/engines/document/checklist/template.ts.
+ */
+export interface ChecklistTemplateItem {
+  key: string;
+  label: string;
+  /** Plain-language description shown to a client who is responsible for it. */
+  description: string;
+  responsibleParty: "client" | "firm" | "third_party";
+  /** Suggested documents.document_type for whatever gets uploaded against this item. */
+  documentType?: string;
+}
+
+export const documentChecklistTemplates = pgTable("document_checklist_templates", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  name: text("name").notNull(),
+  /** PracticeAreaId ('family', …) or null for the firm-wide fallback template. */
+  practiceArea: text("practice_area"),
+  /** Increments per (tenant, practice area) each time a new template is saved. */
+  version: integer("version").notNull().default(1),
+  /** 'draft' | 'active' | 'retired'. At most one 'active' per (tenant, practice area). */
+  status: text("status").notNull().default("draft"),
+  items: jsonb("items").$type<ChecklistTemplateItem[]>().notNull(),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
+  activatedByUserId: uuid("activated_by_user_id").references(() => users.id),
+  retiredAt: timestamp("retired_at", { withTimezone: true }),
+}, (t) => [
+  index("document_checklist_templates_tenant_area_idx").on(t.tenantId, t.practiceArea, t.status),
+  uniqueIndex("document_checklist_templates_one_active_key")
+    .on(t.tenantId, sql`coalesce(${t.practiceArea}, '')`)
+    .where(sql`${t.status} = 'active'`),
+  check("document_checklist_templates_status_check", sql`${t.status} in ('draft','active','retired')`),
+  check("document_checklist_templates_version_check", sql`${t.version} >= 1`),
+]);
+
+/**
+ * One matter's required-documents checklist (c49). A row exists whether or
+ * not anything has been uploaded yet — 'missing' is the normal starting
+ * state, so this cannot simply be a view over `document_groups`.
+ *
+ * Visibility boundary (same rule as c45/c46): the client portal (c11) may
+ * only ever be shown rows with responsibleParty = 'client'; internal notes
+ * and third-party items are firm-side only. Enforced in
+ * src/engines/document/checklist/service.ts, not just in the UI.
+ */
+export const documentChecklistItems = pgTable("document_checklist_items", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  matterId: uuid("matter_id").notNull().references(() => matters.id),
+  templateId: uuid("template_id").references(() => documentChecklistTemplates.id),
+  /** Template item key when seeded from a template; null for an item a lawyer added by hand. */
+  templateItemKey: text("template_item_key"),
+  label: text("label").notNull(),
+  description: text("description").notNull().default(""),
+  /** 'client' | 'firm' | 'third_party' — who provides it (c49). */
+  responsibleParty: text("responsible_party").notNull(),
+  /** 'missing' | 'requested' | 'received' | 'accepted' | 'not_applicable'. */
+  status: text("status").notNull().default("missing"),
+  /** Required (and logged) when status = 'not_applicable' (c49: "with a logged reason"). */
+  notApplicableReason: text("not_applicable_reason"),
+  /** Set once a file has been uploaded against this item ('received'); the current version is at groups.currentDocumentId. */
+  groupId: uuid("group_id").references(() => documentGroups.id),
+  /** The task (core/tasks.ts) tracking this item while it is outstanding, for the shared overdue/flag mechanism (c44/c45/c46). */
+  taskId: uuid("task_id").references(() => tasks.id),
+  /**
+   * 'not_checked' | 'passed' | 'flagged' — the AI's basic upload sanity check
+   * (readable, right type, pages present, looks like the requested kind).
+   * Never a judgment of legal sufficiency: only a lawyer sets status = 'accepted'.
+   */
+  aiCheckStatus: text("ai_check_status").notNull().default("not_checked"),
+  aiCheckDetail: jsonb("ai_check_detail").$type<Record<string, unknown>>().notNull().default({}),
+  requestedAt: timestamp("requested_at", { withTimezone: true }),
+  receivedAt: timestamp("received_at", { withTimezone: true }),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  acceptedByUserId: uuid("accepted_by_user_id").references(() => users.id),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Items are archived, never deleted — a lawyer removing one is still a logged status change (c49). */
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+}, (t) => [
+  index("document_checklist_items_tenant_matter_idx").on(t.tenantId, t.matterId, t.status),
+  index("document_checklist_items_tenant_responsible_idx").on(t.tenantId, t.responsibleParty, t.status),
+  uniqueIndex("document_checklist_items_template_key_key")
+    .on(t.tenantId, t.matterId, t.templateItemKey)
+    .where(sql`${t.templateItemKey} is not null and ${t.archivedAt} is null`),
+  check(
+    "document_checklist_items_responsible_party_check",
+    sql`${t.responsibleParty} in ('client','firm','third_party')`
+  ),
+  check(
+    "document_checklist_items_status_check",
+    sql`${t.status} in ('missing','requested','received','accepted','not_applicable')`
+  ),
+  check(
+    "document_checklist_items_not_applicable_reason_check",
+    sql`${t.status} <> 'not_applicable' or ${t.notApplicableReason} is not null`
+  ),
+  check(
+    "document_checklist_items_ai_check_status_check",
+    sql`${t.aiCheckStatus} in ('not_checked','passed','flagged')`
+  ),
+]);
+
+// ---------------------------------------------------------------------------
 // MIGRATION NOTES for the integration step (hand-add to the generated SQL):
 //
 // 1. RLS + the standard tenant_isolation policy (same text as migrations/0000)
 //    on every table in this file:
 //    document_folder_templates, document_folders, document_groups,
 //    document_version_files, document_text, document_access_log,
-//    document_access_blocks, document_retention_rules.
+//    document_access_blocks, document_retention_rules,
+//    document_checklist_templates, document_checklist_items.
 //
 // 2. Staging grants app_runtime SELECT/INSERT/UPDATE/DELETE on new tables by
 //    default. Restrict as follows:
@@ -376,7 +513,8 @@ export const documentRetentionRules = pgTable("document_retention_rules", {
 //    - version history must never lose rows (c84: never overwritten):
 //        REVOKE DELETE ON document_groups, document_version_files, document_text,
 //          document_folders, document_folder_templates, document_retention_rules,
-//          document_access_blocks FROM app_runtime;
+//          document_access_blocks, document_checklist_templates, document_checklist_items
+//          FROM app_runtime;
 //      (Destruction after the retention clock — c90 — runs under a separate,
 //      elevated purge role after lawyer approval, not as app_runtime.)
 //    - document_retention_rules is supersede-only; app_runtime may UPDATE only
@@ -410,4 +548,22 @@ export const documentRetentionRules = pgTable("document_retention_rules", {
 //
 // 5. Partial unique indexes above use expressions (coalesce) and WHERE
 //    clauses; confirm drizzle-kit emitted them verbatim.
+//
+// 6. document_groups gained four columns (c40): delivery_status (default
+//    'not_yet'), delivery_method, delivery_confirmed_at,
+//    delivery_confirmed_by_user_id. All nullable or defaulted, so this is a
+//    purely additive ALTER TABLE — existing rows get delivery_status =
+//    'not_yet' and need no backfill.
+//
+// 7. document_checklist_items.task_id references the foundation `tasks`
+//    table (src/db/tables/foundation.ts) — confirm drizzle-kit resolved the
+//    cross-file FK without a circular-import problem at generate time; if it
+//    did not, add the FK by hand to the generated SQL instead.
+//
+// 8. document_checklist_items is NOT in the "never overwritten" list above:
+//    unlike a document version, a checklist item's status is meant to be
+//    updated in place (missing → requested → received → accepted) by
+//    src/engines/document/checklist/service.ts. app_runtime keeps ordinary
+//    UPDATE on this table; only DELETE is revoked (items are archived, not
+//    deleted — see the table's own comment).
 // ---------------------------------------------------------------------------
