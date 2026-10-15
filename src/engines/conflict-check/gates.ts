@@ -1,4 +1,4 @@
-// Approval gates owned by the Conflict-check engine (c3, c56, c57, c58, c59, c61, c62, c63, c96, c97).
+// Approval gates owned by the Conflict-check engine (c3, c56, c57, c58, c59, c60, c61, c62, c63, c96, c97).
 //
 // Nothing here is approved. Until a reviewer signs off (npm run compliance --
 // approve …), client-facing wording renders as a visible
@@ -122,6 +122,24 @@ export const CONFLICT_COPY_GATES = {
     draft:
       "List businesses you own or help run, boards you sit on, close family relationships and investments that could affect " +
       "your independent judgment. Do not enter amounts. Only you and the firm's conflicts attorney can see this list.",
+  }),
+  /**
+   * c60 §4.2 — the written notice a screen itself requires before it can be
+   * treated as enforced (c60 is explicit that the firm must actually TELL the
+   * affected client or prospective client a wall is in place, not just put
+   * one up internally). Minimal on purpose, matching the waiver-signature
+   * and non-engagement notices above: no case facts, no names, no mention of
+   * who is screened or why.
+   */
+  screenSetupNotice: defineGate({
+    key: "copy.conflict-check.screen_setup_notice",
+    cardIds: ["c60"],
+    reviewers: ["attorney"],
+    description: "Minimal notice to a client or prospective client that an internal ethical screen has been put in place (no names, no reason)",
+    draft:
+      "Subject: A notice from {firmName}\n\n" +
+      "{firmName} has put an internal information barrier in place for your matter, as required by our professional conduct rules. " +
+      "This does not change who is handling your matter. If you have questions, please contact us.",
   }),
 } as const;
 

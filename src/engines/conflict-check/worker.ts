@@ -2,9 +2,11 @@
 // src/worker/hooks.ts; ADR-0001 D6). Each hook runs once per active firm per
 // tick in its own tenant transaction.
 
+import { listOpenTasks } from "@/core";
 import type { EngineWorkerModule } from "@/worker/hooks";
 import { flagLateStartDates } from "./lateralService";
 import { EXPORT_TASK_TYPE, generateExport } from "./logService";
+import { runScreenSetupTask, SCREEN_SETUP_TASK_TYPE } from "./screens";
 import { ENGINE } from "./settings";
 import { syncMatterParties } from "./sync";
 import { backfillMatchKeysForTenant } from "./matchKeysService";
@@ -54,6 +56,36 @@ export const worker: EngineWorkerModule = {
       engine: ENGINE,
       run: async ({ tx, tenantId, now }) => ({ queued: await ensureMaintenanceQueued(tx, tenantId, now) }),
     },
+    {
+      // c60 §4.2: a decision's requested screens get their written notice
+      // sent and are activated. The hand-off task this processes is created
+      // by decisionService.ts via the shared core/tasks.ts mechanism
+      // (createTask(), kind SCREEN_SETUP_TASK_TYPE) alongside each
+      // 'requested' screen — NOT a scheduled_tasks row, so it is picked up
+      // by scanning listOpenTasks() here rather than through
+      // scheduledTaskHandlers (which only ever dispatches scheduled_tasks
+      // rows, and whose row type has no sourceRef). runScreenSetupTask()
+      // completes the task itself once every screen from that decision is
+      // set up, so an unresolved party simply leaves it open for the next
+      // tick (and for a human) rather than being retried here.
+      name: "conflict-check.screen_setup",
+      engine: ENGINE,
+      run: async ({ tx, tenantId, now }) => {
+        const open = await listOpenTasks(tx, tenantId, { kinds: [SCREEN_SETUP_TASK_TYPE] });
+        let processed = 0;
+        let activated = 0;
+        let skipped = 0;
+        for (const task of open) {
+          const result = await runScreenSetupTask(tx, { tenantId, taskId: task.id, sourceRef: task.sourceRef, now });
+          if (result) {
+            processed += 1;
+            activated += result.activated;
+            skipped += result.skipped;
+          }
+        }
+        return { processed, activated, skipped };
+      },
+    },
   ],
   scheduledTaskHandlers: {
     // c63 §4.3: exports are built in the background with the requester's current access.
@@ -69,4 +101,4 @@ export const worker: EngineWorkerModule = {
       await runDailyMaintenance(tx, tenantId, now);
     },
   },
-};
+}
