@@ -5,6 +5,7 @@
 import type { EngineWorkerModule } from "@/worker/hooks";
 import { flagLateStartDates } from "./lateralService";
 import { EXPORT_TASK_TYPE, generateExport } from "./logService";
+import { runScreenSetupTask, SCREEN_SETUP_TASK_TYPE } from "./screens";
 import { ENGINE } from "./settings";
 import { syncMatterParties } from "./sync";
 import { backfillMatchKeysForTenant } from "./matchKeysService";
@@ -68,5 +69,11 @@ export const worker: EngineWorkerModule = {
     [MAINTENANCE_TASK_TYPE]: async ({ tx, tenantId, now }) => {
       await runDailyMaintenance(tx, tenantId, now);
     },
+    // c60 §4.2: a decision's requested screens get their written notice sent
+    // and are activated; the hand-off task this handler processes is created
+    // by decisionService.ts alongside each 'requested' screen.
+    [SCREEN_SETUP_TASK_TYPE]: async ({ tx, tenantId, task, now }) => {
+      await runScreenSetupTask(tx, { tenantId, taskId: task.id, sourceRef: task.sourceRef, now });
+    },
   },
-};
+}
