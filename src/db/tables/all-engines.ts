@@ -12,9 +12,10 @@
 //      (permission_overrides and firm_role_assignments moved to ./foundation.ts
 //      in wave 3 so core can resolve roles; same SQL tables)
 // c102 practice areas: practice_area_pack_adoptions (+ access_change_log)
+// c98  data import: import_batches, import_rows
 
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, text, boolean, timestamp, jsonb, index, uniqueIndex, check } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, boolean, integer, timestamp, jsonb, index, uniqueIndex, check } from "drizzle-orm/pg-core";
 import { firms, users, matters } from "../schema";
 
 // ---------------------------------------------------------------------------
@@ -119,12 +120,78 @@ export const practiceAreaPackAdoptions = pgTable("practice_area_pack_adoptions",
 ]);
 
 // ---------------------------------------------------------------------------
+// c98 — data import: one staged batch, with every source row kept for audit
+// ---------------------------------------------------------------------------
+
+/**
+ * One import attempt (one Clio/MyCase export, or one spreadsheet) for one
+ * firm. `dryRunReport` is the full DryRunReport (types.ts) as of the last
+ * mapping pass, kept verbatim for audit even after execution. Status only
+ * ever moves forward except into 'rejected': dry_run_complete -> approved
+ * (firm sign-off, c98's required step) -> executed. A batch with any
+ * error-severity row can reach 'approved' only after those rows are fixed
+ * and re-mapped (service.ts enforces this, not a DB constraint, since it
+ * depends on counting related import_rows).
+ */
+export const importBatches = pgTable("import_batches", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  sourceKind: text("source_kind").notNull(),
+  status: text("status").notNull().default("dry_run_complete"),
+  dryRunReport: jsonb("dry_run_report").$type<Record<string, unknown>>().notNull(),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  signedOffByUserId: uuid("signed_off_by_user_id").references(() => users.id),
+  signedOffAt: timestamp("signed_off_at", { withTimezone: true }),
+  signoffReason: text("signoff_reason"),
+  executedAt: timestamp("executed_at", { withTimezone: true }),
+  executedByUserId: uuid("executed_by_user_id").references(() => users.id),
+  rejectedAt: timestamp("rejected_at", { withTimezone: true }),
+  rejectedReason: text("rejected_reason"),
+}, (t) => [
+  index("import_batches_tenant_status_idx").on(t.tenantId, t.status),
+  check("import_batches_source_kind_check", sql`${t.sourceKind} in ('clio','mycase','spreadsheet')`),
+  check("import_batches_status_check", sql`${t.status} in ('dry_run_complete','approved','executed','rejected')`),
+]);
+
+/**
+ * One staged row within a batch — the raw source fields, the mapped/
+ * normalized data, and every issue found for it (dataImport/types.ts's
+ * ImportIssue[], mirrored here as jsonb so the dry-run report and the
+ * per-row detail view read from the same data). `createdEntityId` is filled
+ * in on execute for rows this engine created directly (contacts, matters);
+ * rows handed off as a task instead (see dataImport/service.ts) record the
+ * task id there.
+ */
+export const importRows = pgTable("import_rows", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  batchId: uuid("batch_id").notNull().references(() => importBatches.id),
+  rowNumber: integer("row_number").notNull(),
+  recordKind: text("record_kind").notNull(),
+  rawFields: jsonb("raw_fields").$type<Record<string, string>>().notNull(),
+  mappedData: jsonb("mapped_data").$type<Record<string, unknown> | null>(),
+  issues: jsonb("issues").$type<Record<string, unknown>[]>().notNull().default([]),
+  status: text("status").notNull().default("pending"),
+  createdEntityId: uuid("created_entity_id"),
+}, (t) => [
+  index("import_rows_tenant_batch_idx").on(t.tenantId, t.batchId),
+  index("import_rows_tenant_status_idx").on(t.tenantId, t.status),
+  check(
+    "import_rows_record_kind_check",
+    sql`${t.recordKind} in ('contact','matter','document','calendar_event','task','time_entry','invoice','trust_balance')`
+  ),
+  check("import_rows_status_check", sql`${t.status} in ('pending','error','warning','imported','handed_off','skipped')`),
+]);
+
+// ---------------------------------------------------------------------------
 // MIGRATION NOTES for the integration step (hand-add to the generated SQL):
 //
 // 1. RLS + the standard tenant_isolation policy (same text as migrations/0000)
 //    on every table in this file:
 //    permission_overrides, firm_role_assignments, matter_access_settings,
-//    matter_team_members, access_change_log, practice_area_pack_adoptions.
+//    matter_team_members, access_change_log, practice_area_pack_adoptions,
+//    import_batches, import_rows.
 // 2. Staging grants app_runtime SELECT/INSERT/UPDATE/DELETE by default. Then:
 //    - access_change_log is APPEND-ONLY (c6 / c99 "every permission change logged"):
 //        REVOKE UPDATE, DELETE ON access_change_log FROM app_runtime;
@@ -135,10 +202,18 @@ export const practiceAreaPackAdoptions = pgTable("practice_area_pack_adoptions",
 //        REVOKE DELETE ON matter_access_settings FROM app_runtime;
 //    - permission_overrides KEEPS DELETE (clearing a cell back to its default
 //      deletes the row; the change itself is in access_change_log).
-//    - REVOKE ALL ON all six tables FROM anon, authenticated; (as migration 0004)
+//    - import_batches and import_rows also keep every row (audit trail for
+//      what was imported and from where): REVOKE DELETE ON import_batches,
+//      import_rows FROM app_runtime;
+//    - REVOKE ALL ON all eight tables FROM anon, authenticated; (as migration 0004)
 // 3. The role CHECK lists (now in ./foundation.ts) mirror FIRM_ROLES in
 //    src/core/permissions.ts minus 'client'; keep them in sync.
 // 4. Later (c99 follow-up): role-based RLS policies for party-index and
 //    trust-reconciliation tables can call a SQL function that evaluates the
 //    same matrix; until then the policy is enforced in code (can()).
+// 5. import_rows.mapped_data and .raw_fields can contain client PII (names,
+//    emails, phone numbers) for firms migrating off another system — same
+//    sensitivity class as the `parties`/`contacts` table it's staging data
+//    for. Apply the same encryption-at-rest/access-control posture as that
+//    table (c9 encryption & access control review) once that's finalized.
 // ---------------------------------------------------------------------------
