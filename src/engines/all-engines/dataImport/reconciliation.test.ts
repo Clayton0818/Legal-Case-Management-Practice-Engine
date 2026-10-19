@@ -30,7 +30,7 @@ describe("reconcileTrustBalances", () => {
 
   it("flags a balance present only in the import", () => {
     const result = reconcileTrustBalances([{ clientExternalId: "C-1", balanceCents: 100, asOfDate: DATE }], []);
-    expect(result.mismatches[0]).toMatchObject({ reason: "missing_in_import" } === undefined ? { reason: "missing_in_old_system" } : { reason: "missing_in_old_system" });
+    expect(result.mismatches[0]).toMatchObject({ reason: "missing_in_old_system" });
   });
 
   it("keys client+matter balances separately, not just by client", () => {
