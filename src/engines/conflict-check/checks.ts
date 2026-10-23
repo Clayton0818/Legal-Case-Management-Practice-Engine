@@ -27,6 +27,7 @@ import type { TenantTx } from "@/tenancy/withTenant";
 import { listConflictAttorneys, listFirmAdmins, pickReviewer } from "./access";
 import { classifyOutcome, combineGates, computeCheckGate, interestOwners, type GateResult, type GatedAction } from "./decisions";
 import { CONFLICT_COPY_GATES } from "./gates";
+import { recordIntakeResult, syncIntakeResolution } from "./intakeResults";
 import { expandOrgLinkHits, matchIndex } from "./matching";
 import { loadIndexEntries, loadOrgLinks } from "./partyIndex";
 import { applyRuleTable, DRAFT_RULE_TABLE, UNAPPLIED_ASSESSMENT, type RuleAssessment } from "./ruleTable";
@@ -218,6 +219,11 @@ export async function runConflictCheck(tx: TenantTx, input: RunCheckInput): Prom
       roleMatrixApplied: roleEvaluation.applied,
     },
   });
+
+  // c110: hand the outcome to the intake engine through the shared
+  // conflict_check_results table (written before the gate refresh below,
+  // which keeps its resolution in step with the gate).
+  await recordIntakeResult(tx, check!, now);
 
   let row = check!;
   if (outcome !== "clear") row = await openDecisionTask(tx, row, { now, firmSettings });
@@ -434,6 +440,8 @@ export async function refreshGate(tx: TenantTx, tenantId: string, subject: GateS
       payload: { from: previous?.state ?? null, to: gate.state, closedReason: gate.closedReason },
     });
   }
+  // c110: intake reads conflict_check_results, not this gate — keep the two in step.
+  if (subject.type === "intake_session") await syncIntakeResolution(tx, tenantId, subject.id, gate, now);
   return gate;
 }
 
