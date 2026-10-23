@@ -203,6 +203,12 @@ export async function executeImportBatch(
 
   const rows = await tx.select().from(importRows).where(and(eq(importRows.tenantId, input.tenantId), eq(importRows.batchId, input.batchId)));
 
+  // Check the trust-accounting gate BEFORE writing anything, so a blocked
+  // batch never leaves half its contacts or hand-off tasks behind.
+  if (rows.some((row) => row.recordKind === "trust_balance" && row.status !== "error")) {
+    requireTrustBalanceImportApproval({ tenantId: input.tenantId, action: "data_import.trust_balance_import" });
+  }
+
   const externalIdToPartyId = new Map<string, string>();
   let contactsCreated = 0;
   let handOffTasksCreated = 0;
@@ -239,10 +245,6 @@ export async function executeImportBatch(
       continue;
     }
     const data = (row.mappedData ?? {}) as Record<string, unknown> & { clientExternalId?: string };
-
-    if (row.recordKind === "trust_balance") {
-      requireTrustBalanceImportApproval({ tenantId: input.tenantId, action: "data_import.trust_balance_import" });
-    }
 
     const resolvedPartyId = typeof data.clientExternalId === "string" ? externalIdToPartyId.get(data.clientExternalId) : undefined;
 

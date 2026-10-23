@@ -15,7 +15,7 @@ export interface FieldSpec<T> {
   parse?: (raw: string) => T | undefined;
 }
 
-export type ColumnMapping<T extends Record<string, unknown>> = {
+export type ColumnMapping<T extends object> = {
   [K in keyof T]: FieldSpec<T[K]>;
 };
 
@@ -28,7 +28,7 @@ export interface MapRowResult<T> {
  * Apply a ColumnMapping to one raw row. Never throws: a field whose `parse`
  * throws is recorded as an error issue for that field instead.
  */
-export function mapRow<T extends Record<string, unknown>>(
+export function mapRow<T extends object>(
   row: RawImportRow,
   recordKind: ImportRecordKind,
   mapping: ColumnMapping<T>

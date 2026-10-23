@@ -25,7 +25,10 @@ export const MYCASE_CONTACT_MAPPING: ColumnMapping<NormalizedContact> = {
   fullName: { source: joinName, required: true },
   email: { source: "Email" },
   phone: { source: "Phone" },
-  isOrganization: { source: "Company", parse: (raw) => raw.trim().length > 0 },
+  // MyCase leaves Company blank for individuals. A plain column source would
+  // skip the blank cell and leave this undefined, so derive it from the row:
+  // the source yields a boolean, which mapRow stringifies before parse().
+  isOrganization: { source: (fields) => (fields["Company"]?.trim() ?? "").length > 0, parse: (raw) => raw === "true" },
 };
 
 export const MYCASE_MATTER_MAPPING: ColumnMapping<NormalizedMatter> = {
