@@ -63,30 +63,47 @@ export function formatAnswerValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
+// Espresso & champagne theme: status pills carry a small leading dot (a
+// ::before pseudo-element), so the same class string works on any
+// `inline-flex items-center rounded-full` span without markup changes.
+const DOT = "before:mr-1.5 before:inline-block before:h-1.5 before:w-1.5 before:shrink-0 before:rounded-full";
+const PILL = {
+  // Cool slate-blue: early / in-progress intake.
+  intake: `bg-[#EAEFF3] text-[#2C4256] ${DOT} before:bg-[#5A7A94]`,
+  // Warm gold: needs a person's attention.
+  review: `bg-[#F7EEDC] text-[#6B4614] ${DOT} before:bg-[#C08A3E]`,
+  // Green: good outcome.
+  good: `bg-[#E5F1E8] text-[#23502F] ${DOT} before:bg-[#3F8A57]`,
+  // Muted red: declined / definite conflict.
+  bad: `bg-[#F6E3DF] text-[#7A2A1E] ${DOT} before:bg-[#B5503F]`,
+  // Neutral: ended without a matter.
+  neutral: `bg-slate-100 text-slate-600 ${DOT} before:bg-slate-400`,
+} as const;
+
 const STAGE_BADGE_CLASSES: Record<string, string> = {
-  prospective: "bg-slate-100 text-slate-700",
-  consultation_scheduled: "bg-blue-100 text-blue-700",
-  consult_completed_manual_follow_up: "bg-amber-100 text-amber-700",
-  pending_review: "bg-amber-100 text-amber-700",
-  did_not_schedule: "bg-slate-100 text-slate-500",
-  did_not_hire_referred_out: "bg-slate-100 text-slate-500",
-  declined_conflict: "bg-red-100 text-red-700",
-  retained: "bg-green-100 text-green-700",
-  closed: "bg-slate-200 text-slate-600",
+  prospective: PILL.intake,
+  consultation_scheduled: PILL.intake,
+  consult_completed_manual_follow_up: PILL.review,
+  pending_review: PILL.review,
+  did_not_schedule: PILL.neutral,
+  did_not_hire_referred_out: PILL.neutral,
+  declined_conflict: PILL.bad,
+  retained: PILL.good,
+  closed: PILL.neutral,
 };
 
 export function stageBadgeClass(stage: string): string {
-  return STAGE_BADGE_CLASSES[stage] ?? "bg-slate-100 text-slate-700";
+  return STAGE_BADGE_CLASSES[stage] ?? PILL.neutral;
 }
 
 const CONFLICT_OUTCOME_BADGE_CLASSES: Record<string, string> = {
-  clear: "bg-green-100 text-green-700",
-  possible: "bg-amber-100 text-amber-700",
-  definite: "bg-red-100 text-red-700",
+  clear: PILL.good,
+  possible: PILL.review,
+  definite: PILL.bad,
 };
 
 export function conflictOutcomeBadgeClass(outcome: string): string {
-  return CONFLICT_OUTCOME_BADGE_CLASSES[outcome] ?? "bg-slate-100 text-slate-700";
+  return CONFLICT_OUTCOME_BADGE_CLASSES[outcome] ?? PILL.neutral;
 }
 
 export function formatPercent(ratio: number): string {
