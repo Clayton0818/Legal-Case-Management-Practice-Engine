@@ -6,12 +6,10 @@
 // Direct inserts are used only where no service exists yet:
 //   - the firm's users and its first config version (onboarding has no service);
 //   - the two pre-existing ("imported history") matters, their parties and
-//     matter_parties links (matter import, c98, is not built yet);
-//   - conflict_check_results rows mirroring the conflict-check engine's own
-//     outcome (integration gap: the engine writes conflict_checks, while the
-//     intake engine reads the shared conflict_check_results — nothing bridges
-//     them yet). The mirror NEVER upgrades an outcome and never clears one:
-//     "resolved" is only written after a conflicts attorney's real decision.
+//     matter_parties links (matter import, c98, is not built yet).
+//
+// The conflict-check engine now writes the shared conflict_check_results
+// rows the intake engine reads (c110), so the demo no longer mirrors them.
 //
 // Anything gated on a pending attorney / CPA / vendor approval is attempted
 // through the real service and recorded as BLOCKED with its visible
@@ -23,7 +21,6 @@
 
 import { and, eq } from "drizzle-orm";
 import {
-  conflictCheckResults,
   firmConfigVersions,
   matterParties,
   matters,
@@ -246,25 +243,6 @@ async function seedConflictHistory(r: SeedRunner, ctx: SeedContext): Promise<voi
 // 3. Prospects chat in: triage, emergency, conflict check (clear / possible / definite)
 // ---------------------------------------------------------------------------
 
-async function mirrorConflictResult(
-  t: TenantTx,
-  ctx: SeedContext,
-  sessionId: string,
-  outcome: "clear" | "possible" | "definite",
-  resolvedByUserId: string | null
-): Promise<void> {
-  await t.insert(conflictCheckResults).values({
-    tenantId: ctx.tenantId,
-    intakeSessionId: sessionId,
-    roleSought: "client",
-    outcome,
-    matchedSources: { mirroredFrom: "conflict_checks", note: "DEMO seed bridge — see src/engines/demo/seed.ts" },
-    firmConfigVersionId: ctx.configVersionId,
-    resolvedByUserId,
-    resolvedAt: resolvedByUserId ? ctx.now : null,
-  });
-}
-
 async function chatIn(r: SeedRunner, ctx: SeedContext, p: DemoProspect, minutesAgo: number): Promise<string | null> {
   const at = new Date(ctx.now.getTime() - minutesAgo * 60_000);
   const sessionId = await r.step("intake", `intake.chat_in.${p.key}`, async (t) => {
@@ -296,8 +274,7 @@ async function chatIn(r: SeedRunner, ctx: SeedContext, p: DemoProspect, minutesA
       by: user(ctx, "intake"),
       now: at,
     });
-    // Mirror the engine's own outcome for the intake engine (never upgraded, never cleared here).
-    await mirrorConflictResult(t, ctx, sessionId, res.check.outcome as "clear" | "possible" | "definite", null);
+    // The engine itself hands the outcome to intake via conflict_check_results (c110).
     return res.check;
   });
   if (check) ctx.checks[p.key] = check.id;
@@ -331,10 +308,6 @@ async function seedProspects(r: SeedRunner, ctx: SeedContext): Promise<void> {
         now: ctx.now,
       });
       const matter = await ensureProspectiveMatter(t, ctx.tenantId, defSession, ctx.now);
-      await t
-        .update(conflictCheckResults)
-        .set({ resolvedByUserId: ctx.users.partner, resolvedAt: ctx.now })
-        .where(and(eq(conflictCheckResults.tenantId, ctx.tenantId), eq(conflictCheckResults.intakeSessionId, defSession)));
       await systemMoveMatter(t, { tenantId: ctx.tenantId, matterId: matter.id, systemStage: "declined_conflict", via: "conflict_decision", actor: user(ctx, "partner"), reason: "Conflicts attorney declined (DEMO)" });
     });
   }
