@@ -16,21 +16,38 @@ const TILES = [
 
 export default function Home() {
   return (
-    <main className="mx-auto max-w-4xl px-6 py-10">
-      <h1 className="text-2xl font-semibold text-slate-900">Legal Intake Engine</h1>
-      <p className="mt-1 text-sm text-slate-600">
-        Health check: <code>/api/health</code>
-      </p>
-      <div className="mt-6 grid gap-4 sm:grid-cols-3">
-        {TILES.map((t) => (
-          <Link key={t.href} href={t.href} className="block rounded-lg border border-slate-200 bg-white p-5 shadow-sm hover:border-slate-400">
-            <span className="flex items-center justify-between">
-              <span className="text-base font-semibold text-slate-900">{t.title}</span>
-              {"badge" in t && <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold uppercase text-amber-950">{t.badge}</span>}
-            </span>
-            <span className="mt-2 block text-sm text-slate-600">{t.body}</span>
-          </Link>
-        ))}
+    <main className="min-h-screen bg-espresso-deep text-ivory-text">
+      <div className="mx-auto max-w-6xl px-5 py-12 sm:px-8 sm:py-20">
+        <span className="inline-flex items-center gap-2.5 rounded-full border border-white/10 py-2 pl-3 pr-4 text-sm font-medium text-taupe">
+          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-champagne" />
+          Case management
+        </span>
+        <h1 className="mt-6 font-display text-5xl leading-none tracking-tight text-ivory-bright sm:text-7xl">
+          Legal Intake <span className="italic text-champagne">Engine</span>
+        </h1>
+        <p className="mt-4 text-sm text-taupe-dim">
+          Health check: <code className="rounded bg-white/5 px-1.5 py-0.5 text-taupe">/api/health</code>
+        </p>
+        <div className="mt-10 grid gap-4 sm:grid-cols-3">
+          {TILES.map((t) => (
+            <Link
+              key={t.href}
+              href={t.href}
+              className="group flex flex-col rounded-3xl border border-white/10 bg-espresso-panel p-6 transition hover:border-champagne/50"
+            >
+              <span className="flex items-center justify-between gap-3">
+                <span className="font-display text-3xl text-ivory-bright">{t.title}</span>
+                {"badge" in t && (
+                  <span className="rounded-full bg-champagne/15 px-2.5 py-1 text-xs font-semibold text-champagne-light">{t.badge}</span>
+                )}
+              </span>
+              <span className="mt-3 block text-sm leading-relaxed text-taupe">{t.body}</span>
+              <span aria-hidden="true" className="mt-6 text-sm font-semibold text-champagne group-hover:text-champagne-light">
+                Open →
+              </span>
+            </Link>
+          ))}
+        </div>
       </div>
     </main>
   );

@@ -1,3 +1,18 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Espresso & champagne theme — base layer. Fonts are loaded with a <link>
+   in src/app/layout.tsx (no build-time network fetch). */
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+
+  /* One visible focus style everywhere: champagne ring, offset so it reads
+     on both the dark client surfaces and the light staff console. */
+  :focus-visible {
+    outline: 2px solid #d4b07a;
+    outline-offset: 2px;
+  }
+}

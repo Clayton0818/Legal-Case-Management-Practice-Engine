@@ -25,6 +25,15 @@ function nextId(): string {
   return `m${idCounter}`;
 }
 
+// Espresso & champagne theme classes, kept together so the widget's look is
+// easy to lift with it when it becomes a standalone embeddable bundle.
+const CHIP =
+  "min-h-[44px] rounded-full border border-champagne/50 bg-champagne/10 px-5 text-sm font-medium text-ivory-bright transition hover:bg-champagne/20";
+const FIELD =
+  "w-full min-h-[48px] rounded-2xl border border-white/10 bg-espresso-deep px-4 py-3 text-base text-ivory-bright placeholder:text-taupe-faint";
+const PRIMARY =
+  "inline-flex min-h-[48px] items-center justify-center gap-2 rounded-full bg-champagne px-6 text-sm font-semibold text-espresso-deep transition hover:bg-champagne-light";
+
 // Framework-agnostic on purpose (ADR-0001 §D3): this component only uses
 // fetch + React state, no next/navigation or other Next-only APIs, so a
 // future standalone-embeddable rewrite of this widget (before any real
@@ -151,15 +160,15 @@ export function IntakeChatWidget({ apiBase = "/api/intake" }: { apiBase?: string
   }
 
   return (
-    <div className="mx-auto flex h-full max-w-lg flex-col">
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
+    <div className="mx-auto flex h-full max-w-xl flex-col">
+      <div ref={scrollRef} aria-live="polite" className="flex-1 space-y-3 overflow-y-auto px-4 py-5 md:px-7">
         {messages.map((m) => (
           <div key={m.id} className={m.from === "bot" ? "flex justify-start" : "flex justify-end"}>
             <div
               className={
                 m.from === "bot"
-                  ? "max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-bl-sm bg-slate-100 px-4 py-2 text-sm text-slate-900"
-                  : "max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2 text-sm text-white"
+                  ? "max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-bl-md bg-espresso-bubble px-4 py-3 text-[15px] leading-relaxed text-ivory-text"
+                  : "max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-champagne px-4 py-3 text-[15px] leading-relaxed text-espresso-deep"
               }
             >
               {m.text}
@@ -169,15 +178,19 @@ export function IntakeChatWidget({ apiBase = "/api/intake" }: { apiBase?: string
       </div>
 
       {error && (
-        <div className="mx-4 mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div role="alert" className="mx-4 mb-2 rounded-2xl border border-[#B5503F]/40 bg-[#B5503F]/15 px-4 py-3 text-sm text-[#F3D3CC] md:mx-7">
           {error}
         </div>
       )}
 
-      <div className="border-t border-slate-200 p-4">
+      <div className="border-t border-white/5 px-4 pb-5 pt-4 md:px-7">
         {!ended && prompt && !loading && <PromptInput prompt={prompt} onSubmit={submit} />}
-        {loading && <p className="text-sm text-slate-400">…</p>}
-        {ended && !error && <p className="text-sm text-slate-500">This conversation is complete.</p>}
+        {loading && (
+          <p className="text-sm text-taupe-dim" aria-live="polite">
+            …
+          </p>
+        )}
+        {ended && !error && <p className="text-sm text-taupe">This conversation is complete.</p>}
       </div>
     </div>
   );
@@ -205,7 +218,7 @@ function PromptInput({
           <button
             key={opt.value}
             type="button"
-            className="rounded-full border border-slate-300 px-4 py-2 text-sm text-slate-800 transition hover:bg-slate-50"
+            className={CHIP}
             onClick={() => {
               if (prompt.kind === "confirm") {
                 onSubmit({ confirmed: opt.value === "yes" }, opt.label);
@@ -228,7 +241,7 @@ function PromptInput({
   if (prompt.kind === "form") {
     return (
       <form
-        className="space-y-2"
+        className="space-y-2.5"
         onSubmit={(e) => {
           e.preventDefault();
           const summary = [form.fullName, form.email, form.phone].filter(Boolean).join(" · ");
@@ -239,16 +252,14 @@ function PromptInput({
           <input
             key={f.name}
             type={f.type}
+            aria-label={f.label}
             placeholder={f.label}
             value={form[f.name] ?? ""}
             onChange={(e) => setForm((prev) => ({ ...prev, [f.name]: e.target.value }))}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            className={FIELD}
           />
         ))}
-        <button
-          type="submit"
-          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
-        >
+        <button type="submit" className={PRIMARY}>
           Continue
         </button>
       </form>
@@ -258,7 +269,7 @@ function PromptInput({
   // free_text
   return (
     <form
-      className="flex gap-2"
+      className="flex items-end gap-2 rounded-3xl border border-white/10 bg-espresso-deep p-1.5 pl-4"
       onSubmit={(e) => {
         e.preventDefault();
         if (!text.trim()) return;
@@ -269,14 +280,18 @@ function PromptInput({
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={2}
-        className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+        aria-label="Your answer"
+        className="min-h-[48px] flex-1 resize-none bg-transparent py-2.5 text-base text-ivory-bright placeholder:text-taupe-faint"
         placeholder="Type your answer…"
       />
       <button
         type="submit"
-        className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
+        aria-label="Send"
+        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-champagne text-espresso-deep transition hover:bg-champagne-light"
       >
-        Send
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 12h15M13 6l6 6-6 6" stroke="currentColor" strokeWidth="1.9" fill="none" />
+        </svg>
       </button>
     </form>
   );
