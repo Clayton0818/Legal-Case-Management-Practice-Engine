@@ -21,12 +21,16 @@
 //     their task_type (src/engines/<slug>/worker.ts);
 //   - tick hooks run per firm (core: drain the notification outbox through
 //     the stub/real providers; engines: their own scans).
+//   - the email adapter is chosen from the environment before anything runs
+//     (src/integrations/email/install.ts: EMAIL_PROVIDER=postmark); the
+//     'vendor.email' gate still decides whether any email is actually sent.
 
 import { and, asc, eq, isNull, lte } from "drizzle-orm";
 import { withTenant } from "@/tenancy/withTenant";
 import { listActiveFirmIds } from "@/tenancy/firms";
 import { scheduledTasks } from "@/db/schema";
 import { ensureServerApprovals } from "@/compliance/server";
+import { installEmailProviderFromEnv } from "@/integrations/email/install";
 import { buildRegistry, loadEngineWorkerModules, runTenantHooks, type WorkerRegistry } from "./hooks";
 
 const CLAIM_BATCH_SIZE = 100;
@@ -90,6 +94,8 @@ async function claimAndProcessForTenant(tenantId: string, registry: WorkerRegist
 }
 
 async function main() {
+  const email = installEmailProviderFromEnv();
+  console.log(JSON.stringify({ level: "info", event: "worker.email_provider", provider: email.provider, note: email.reason }));
   await ensureServerApprovals(0); // fresh every tick; fails safe (nothing approved) if unreadable
   const registry = buildRegistry(await loadEngineWorkerModules());
   const firmIds = await listActiveFirmIds();
