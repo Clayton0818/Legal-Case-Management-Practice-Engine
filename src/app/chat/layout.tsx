@@ -6,9 +6,5 @@
 // rewrite boundary in mind — avoid coupling this surface tightly to
 // Next.js-only features that would make that rewrite harder later.
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen bg-white">
-      {children}
-    </div>
-  );
+  return <div className="min-h-screen bg-espresso-deep text-ivory-text">{children}</div>;
 }
