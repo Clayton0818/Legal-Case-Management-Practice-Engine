@@ -65,6 +65,15 @@ The next tick logs `worker.email_provider` with `"provider":"postmark"` if it wo
 
 Delivered emails are then marked `delivered` on the outbox row; hard bounces and spam complaints are marked `bounced`, soft bounces `failed`, each with a short reason and an audit-log entry. (Note: the free Render service sleeps after 15 minutes idle; Postmark retries webhooks, so a sleeping service only delays these updates.)
 
+#### Who is told when an email bounces
+
+Hard bounces and spam complaints raise an **internal** alert (code: `src/core/emailBounces.ts`, rules in `src/core/emailBouncePlan.ts`). Soft bounces are only retried; nobody is alerted.
+
+- **A client's email bounced** (founder decision, 2026-10-23): the matter's **responsible lawyer AND every active intake staff member** get the flag "Client email could not be delivered". If the matter has no active lawyer and the firm has no intake staff, the **firm admins** get it instead, so it never goes nowhere. A task, "Confirm a working, safe email address with the client", goes with it: owned by the responsible lawyer (or the firm pool when there is none), due in **8 business hours**, or **2** when the client is DV-sensitive or the bounced notice was urgent (those flags are also raised as high severity). The flag text reminds staff that the notice is still in the client's portal and that they must only use a contact method the client marked safe; for DV-sensitive clients, the responsible lawyer decides how to reach them. Nothing is ever re-sent through another channel or address automatically. Completing the task closes the flag.
+- **A staff member's email bounced**: the **firm admins** get "A staff member's email could not be delivered", naming the person, so the address on their account can be fixed. No task.
+- One alert per person at a time: while a client's (or staff member's) bounce alert is still open, further bounces and Postmark's webhook retries don't create new flags or tasks.
+- If the follow-up task isn't done on time, the normal overdue scan (c45) flags and escalates it like any other task.
+
 ### 5. Sign the DPA, then open the gate
 
 1. Sign Postmark's Data Processing Agreement (Postmark account → Policies / DPA). Keep a copy.
@@ -89,5 +98,5 @@ Client emails stay held until the attorney approves the client wording gates (`n
 ## Limits and open items
 
 - Permanent failures (invalid or inactive address) are retried a few times with backoff and then marked `failed`; the adapter can't yet tell the outbox to stop immediately.
-- A **bounced client email** is recorded and audited, but nothing yet raises a flag to the lawyer about it (c51 says the lawyer should be told). That needs a small follow-up deciding who gets that flag.
+- Intake staff and admins are found by the role on each user's account (`users.role` = `intake_staff` / `firm_admin`); extra roles granted through the c99 role assignments are not yet included.
 - Production should not rely on the 5-minute GitHub Action; ADR-0001 §D6's persistent worker would send within about a minute.

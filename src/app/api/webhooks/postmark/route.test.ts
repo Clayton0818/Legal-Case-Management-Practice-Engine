@@ -1,13 +1,16 @@
 // The Postmark webhook must refuse anything without the configured Basic
-// credentials, ignore events it can't attribute to a firm, and record
-// Delivery / Bounce / SpamComplaint against the right firm. Database calls are
-// faked; checkBasicAuth and decidePostmarkEvent run for real.
+// credentials, ignore events it can't attribute to a firm, record
+// Delivery / Bounce / SpamComplaint against the right firm, and hand bounced
+// email rows to the bounce-alert handler in the same tenant scope. Database
+// calls are faked; checkBasicAuth and decidePostmarkEvent run for real.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkBasicAuth, decidePostmarkEvent } from "@/integrations/email/postmarkWebhook";
 
 const recorded: Array<{ tenantScope: string; input: Record<string, unknown> }> = [];
+const bounceCalls: Array<{ tenantScope: string; row: Record<string, unknown> }> = [];
 let scope = "";
+let nextRow: Record<string, unknown> | null = { id: "row-1" };
 
 vi.mock("@/tenancy/withTenant", () => ({
   withTenant: async (tenantId: string, fn: (tx: unknown) => Promise<unknown>) => {
@@ -18,7 +21,13 @@ vi.mock("@/tenancy/withTenant", () => ({
 vi.mock("@/core/notify", () => ({
   recordDeliveryStatus: async (_tx: unknown, input: Record<string, unknown>) => {
     recorded.push({ tenantScope: scope, input });
-    return { id: "row-1" };
+    return nextRow;
+  },
+}));
+vi.mock("@/core/emailBounces", () => ({
+  handleEmailBounce: async (_tx: unknown, row: Record<string, unknown>) => {
+    bounceCalls.push({ tenantScope: scope, row });
+    return { kind: "client", flagId: "flag-1", taskId: "task-1" };
   },
 }));
 
@@ -36,6 +45,8 @@ describe("POST /api/webhooks/postmark", () => {
 
   beforeEach(() => {
     recorded.length = 0;
+    bounceCalls.length = 0;
+    nextRow = { id: "row-1" };
     process.env.POSTMARK_WEBHOOK_USER = "pm";
     process.env.POSTMARK_WEBHOOK_PASSWORD = "s3cret";
   });
@@ -61,7 +72,8 @@ describe("POST /api/webhooks/postmark", () => {
     expect(recorded).toEqual([]);
   });
 
-  it("records a delivery inside the sending firm's tenant scope", async () => {
+  it("records a delivery inside the sending firm's tenant scope, without a bounce alert", async () => {
+    nextRow = { id: "row-1", status: "delivered", channel: "email" };
     const { POST } = await import("./route");
     const res = await POST(
       request({ RecordType: "Delivery", MessageID: "pm-1", DeliveredAt: "2026-10-23T10:00:00Z", Metadata: { tenantId: TENANT } })
@@ -70,6 +82,28 @@ describe("POST /api/webhooks/postmark", () => {
     expect(recorded).toHaveLength(1);
     expect(recorded[0]!.tenantScope).toBe(TENANT);
     expect(recorded[0]!.input).toMatchObject({ tenantId: TENANT, providerMessageId: "pm-1", status: "delivered" });
+    expect(bounceCalls).toEqual([]);
+  });
+
+  it("hands a hard-bounced email row to the bounce-alert handler in the same tenant scope", async () => {
+    nextRow = { id: "row-2", status: "bounced", channel: "email", recipientType: "party" };
+    const { POST } = await import("./route");
+    const res = await POST(request({ RecordType: "Bounce", Type: "HardBounce", MessageID: "pm-2", Metadata: { tenantId: TENANT } }));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { bounceAlert: string | null }).bounceAlert).toBe("client");
+    expect(bounceCalls).toHaveLength(1);
+    expect(bounceCalls[0]!.tenantScope).toBe(TENANT);
+    expect(bounceCalls[0]!.row).toMatchObject({ id: "row-2" });
+  });
+
+  it("does not alert on a soft bounce or when no outbox row matched", async () => {
+    const { POST } = await import("./route");
+    nextRow = { id: "row-3", status: "failed", channel: "email" };
+    await POST(request({ RecordType: "Bounce", Type: "SoftBounce", MessageID: "pm-3", Metadata: { tenantId: TENANT } }));
+    nextRow = null;
+    const res = await POST(request({ RecordType: "Bounce", Type: "HardBounce", MessageID: "pm-4", Metadata: { tenantId: TENANT } }));
+    expect(((await res.json()) as { matched: boolean }).matched).toBe(false);
+    expect(bounceCalls).toEqual([]);
   });
 
   it("ignores (200) events it cannot attribute, without touching the database", async () => {
