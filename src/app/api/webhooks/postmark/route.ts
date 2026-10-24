@@ -12,6 +12,11 @@
 // providerMessageId matches, so a forged id can't reach another firm's data.
 // Unknown or irrelevant events get 200 so Postmark doesn't keep retrying them.
 //
+// A hard bounce or spam complaint on an email row also alerts the right
+// people (src/core/emailBounces.ts): for a client, the responsible lawyer and
+// intake staff plus a task to confirm a safe address; for staff, the firm
+// admins. Same transaction, so a failure rolls both back and Postmark retries.
+//
 // Database modules are imported lazily so `next build` never needs a
 // DATABASE_URL (same pattern as src/app/api/demo/bootstrap/route.ts).
 
@@ -45,16 +50,19 @@ export async function POST(req: Request) {
   try {
     const { withTenant } = await import("@/tenancy/withTenant");
     const { recordDeliveryStatus } = await import("@/core/notify");
-    const row = await withTenant(update.tenantId, (tx) =>
-      recordDeliveryStatus(tx, {
+    const { handleEmailBounce } = await import("@/core/emailBounces");
+    const result = await withTenant(update.tenantId, async (tx) => {
+      const row = await recordDeliveryStatus(tx, {
         tenantId: update.tenantId,
         providerMessageId: update.providerMessageId,
         status: update.status,
         ...(update.detail ? { detail: update.detail } : {}),
         ...(update.at ? { at: update.at } : {}),
-      })
-    );
-    return Response.json({ ok: true, matched: row !== null, status: update.status });
+      });
+      const alert = row && row.status === "bounced" && row.channel === "email" ? await handleEmailBounce(tx, row) : null;
+      return { matched: row !== null, alert: alert?.kind ?? null };
+    });
+    return Response.json({ ok: true, matched: result.matched, status: update.status, bounceAlert: result.alert });
   } catch (err) {
     console.error(
       JSON.stringify({
