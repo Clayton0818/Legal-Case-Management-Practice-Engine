@@ -18,6 +18,11 @@ import { FAMILY_RULE_KEYS } from "./packs/family";
 
 export { RULE_GATES };
 
+// Client portal copy (c11, c112) lives with the portal (src/portal/gates.ts);
+// re-exported here so loadAllGates() — the compliance CLI and the admin
+// "pending approvals" page — lists it.
+export { PORTAL_COPY_GATES, PORTAL_GATE_KEYS } from "@/portal/gates";
+
 const ATTORNEY = ["attorney"] as const;
 
 /** Texas family-law rule gates (c103). Values never live in code; these gate their use. */

@@ -30,6 +30,7 @@ import { endOfQuietTime, isQuietTime, type QuietWindow } from "./businessHours";
 import { resolveClientAddress, type ContactPoints } from "./contacts";
 import { getFirmSettings } from "./firmSettings";
 import { audit } from "./audit";
+import { portalUrlForFirm } from "@/portal/policy";
 
 export type NotificationChannel = "in_app" | "email" | "sms";
 export type NotificationStatus =
@@ -524,12 +525,17 @@ export async function drainNotificationOutbox(
   if (rows.length === 0) return result;
 
   const settings = await getFirmSettings(tx, tenantId);
-  const [firm] = await tx.select({ name: firms.name }).from(firms).where(eq(firms.id, tenantId)).limit(1);
+  const [firm] = await tx.select({ name: firms.name, slug: firms.slug }).from(firms).where(eq(firms.id, tenantId)).limit(1);
   const ctx: OutboxRowContext = {
     tenantId,
     now,
     firmName: settings.emailFromName ?? firm?.name ?? "Your law firm",
-    settings,
+    // {portalUrl}: the firm's own setting wins; otherwise the built-in client
+    // portal (c11) at PORTAL_BASE_URL/portal/<slug>, when that is configured.
+    settings: {
+      ...settings,
+      clientPortalUrl: settings.clientPortalUrl ?? (firm ? portalUrlForFirm(process.env.PORTAL_BASE_URL, firm.slug) : null),
+    },
     providers: active,
   };
 
