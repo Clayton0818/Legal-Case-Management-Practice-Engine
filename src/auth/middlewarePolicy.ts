@@ -9,7 +9,7 @@
 
 import type { AuthConfig } from "./config";
 
-export type PathClass = "staff_page" | "staff_api" | "widget_asset" | "public";
+export type PathClass = "staff_page" | "staff_api" | "widget_asset" | "client_portal" | "public";
 
 const STAFF_API_PREFIXES = ["/api/admin", "/api/ops", "/api/auth"];
 
@@ -19,8 +19,24 @@ export function classifyPath(pathname: string): PathClass {
   if (STAFF_API_PREFIXES.some(under)) return "staff_api";
   if (under("/admin")) return "staff_page";
   if (under("/widget")) return "widget_asset";
+  if (under("/portal") || under("/api/portal")) return "client_portal";
   return "public";
 }
+
+/**
+ * c11/c112 — the client portal is reachable without STAFF auth (clients have
+ * their own session, checked server-side in src/portal/**), but every
+ * response is kept out of caches, frames, search engines and referrers: a
+ * one-time sign-in token is in the /verify URL, and a shared or monitored
+ * device must not keep copies of a client's pages.
+ */
+export const CLIENT_PORTAL_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  "cache-control": "no-store",
+  "referrer-policy": "no-referrer",
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-robots-tag": "noindex, nofollow",
+});
 
 export type MiddlewareDecision =
   | { action: "next"; headers: Record<string, string> }
@@ -46,6 +62,7 @@ export function decideMiddleware(input: {
     headers["content-security-policy"] = `frame-ancestors ${normalizeFrameAncestors(input.frameAncestors)}`;
     return { action: "next", headers };
   }
+  if (cls === "client_portal") return { action: "next", headers: { ...headers, ...CLIENT_PORTAL_HEADERS } };
   if (cls === "public") return { action: "next", headers };
 
   if (input.config.mode === "dev") return { action: "next", headers };

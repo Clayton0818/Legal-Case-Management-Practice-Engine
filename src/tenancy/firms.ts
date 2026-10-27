@@ -10,7 +10,7 @@
 
 import { rawDb } from "./db";
 import { firms } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 export async function listActiveFirmIds(): Promise<string[]> {
   const rows = await rawDb
@@ -18,4 +18,27 @@ export async function listActiveFirmIds(): Promise<string[]> {
     .from(firms)
     .where(eq(firms.status, "active"));
   return rows.map((r) => r.id);
+}
+
+/**
+ * Client portal (c11): resolve the firm named in /portal/<slug> before there
+ * is a tenantId to scope by — the same narrow, read-only exception as
+ * listActiveFirmIds(). Only trial/active firms; returns only what the portal
+ * needs (id for withTenant(), display name, and whether it is a production
+ * firm, which decides if a dev sign-in link may ever be shown on screen).
+ */
+export interface PortalFirm {
+  id: string;
+  name: string;
+  slug: string;
+  isProduction: boolean;
+}
+
+export async function findPortalFirmBySlug(slug: string): Promise<PortalFirm | null> {
+  const [row] = await rawDb
+    .select({ id: firms.id, name: firms.name, slug: firms.slug, isProduction: firms.isProduction })
+    .from(firms)
+    .where(and(eq(firms.slug, slug), inArray(firms.status, ["trial", "active"])))
+    .limit(1);
+  return row ?? null;
 }
