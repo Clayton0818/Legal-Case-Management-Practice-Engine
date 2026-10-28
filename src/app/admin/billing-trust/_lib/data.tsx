@@ -5,6 +5,7 @@
 
 import { formatCents, type Cents } from "@/engines/billing-trust/money";
 import type { TenantTx } from "@/tenancy/withTenant";
+import { Card, Notice as SharedNotice } from "../../_components/ui";
 
 export type PageData<T> = { ok: true; value: T } | { ok: false; message: string };
 
@@ -40,27 +41,27 @@ export function Money({ cents, strong = false }: { cents: Cents; strong?: boolea
 }
 
 export function Notice({ message }: { message: string }) {
-  return <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{message}</div>;
+  return <SharedNotice tone="warning">{message}</SharedNotice>;
 }
 
 export function Th({ children, right = false }: { children: React.ReactNode; right?: boolean }) {
-  return <th className={`px-3 py-2 font-medium text-slate-600 ${right ? "text-right" : "text-left"}`}>{children}</th>;
+  return <th className={`px-4 py-3 text-xs font-semibold text-slate-500 ${right ? "text-right" : "text-left"}`}>{children}</th>;
 }
 
 export function Td({ children, right = false, mono = false }: { children: React.ReactNode; right?: boolean; mono?: boolean }) {
-  return <td className={`px-3 py-2 align-top ${right ? "text-right" : ""} ${mono ? "font-mono text-xs text-slate-500" : "text-slate-800"}`}>{children}</td>;
+  return <td className={`px-4 py-3 align-top ${right ? "text-right" : ""} ${mono ? "font-mono text-xs text-slate-500" : "text-slate-800"}`}>{children}</td>;
 }
 
 export function Table({ head, children }: { head: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-      <table className="min-w-full divide-y divide-slate-200 text-sm">
-        <thead className="bg-slate-50">
+    <Card className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-slate-100 text-sm">
+        <thead>
           <tr>{head}</tr>
         </thead>
         <tbody className="divide-y divide-slate-100">{children}</tbody>
       </table>
-    </div>
+    </Card>
   );
 }
 

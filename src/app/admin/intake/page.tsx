@@ -5,6 +5,7 @@
 import { getDevTenantId } from "@/tenancy/devTenant";
 import { gateStatus } from "@/compliance/approvals";
 import { INTAKE_GATE_KEYS, INTAKE_SHARED_GATE_KEYS } from "@/engines/intake/gates";
+import { Card, Notice, PageHeader, SectionTitle, StatusPill } from "../_components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,9 @@ function fmt(d: Date | null): string {
   return d ? new Date(d).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }) : "—";
 }
 
+const TH = "px-4 py-3 text-xs font-semibold text-slate-500";
+const TD = "px-4 py-3 text-slate-700";
+
 export default async function IntakeConsolePage() {
   const { queue, emergencies, error } = await loadData();
   const gates = [...INTAKE_GATE_KEYS, ...INTAKE_SHARED_GATE_KEYS].map((key) => gateStatus(key));
@@ -53,77 +57,90 @@ export default async function IntakeConsolePage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">Intake</h1>
-        <p className="mt-1 text-sm text-slate-600">Every channel lands in one queue. Emergencies are listed first.</p>
-      </div>
+      <PageHeader
+        eyebrow="Client intake"
+        title="Intake"
+        description="Every channel lands in one queue. Emergencies are listed first."
+        actions={<StatusPill tone={emergencies > 0 ? "danger" : "brand"}>{queue.length} open</StatusPill>}
+      />
 
       {emergencies > 0 ? (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm font-medium text-red-800">
+        <Notice tone="danger">
           {emergencies} open emergency alert{emergencies === 1 ? "" : "s"} — acknowledge in the emergency queue.
-        </div>
+        </Notice>
       ) : null}
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase text-slate-500">Queue</h2>
-        {error ? <p className="text-sm text-red-700">{error}</p> : null}
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        <SectionTitle>Queue</SectionTitle>
+        {error ? (
+          <div className="mb-3">
+            <Notice tone="danger">{error}</Notice>
+          </div>
+        ) : null}
+        <Card className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
-            <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+            <thead className="border-b border-slate-100">
               <tr>
-                <th className="px-3 py-2">Contact</th>
-                <th className="px-3 py-2">Channel</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Respond by</th>
-                <th className="px-3 py-2">Fit</th>
-                <th className="px-3 py-2">Started</th>
+                <th className={TH}>Contact</th>
+                <th className={TH}>Channel</th>
+                <th className={TH}>Status</th>
+                <th className={TH}>Respond by</th>
+                <th className={TH}>Fit</th>
+                <th className={TH}>Started</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-slate-100">
               {queue.length === 0 ? (
                 <tr>
-                  <td className="px-3 py-3 text-slate-500" colSpan={6}>
+                  <td className="px-4 py-6 text-slate-500" colSpan={6}>
                     No open inquiries.
                   </td>
                 </tr>
               ) : (
                 queue.map((r) => (
-                  <tr key={r.intakeSessionId} className={r.emergencyUnacknowledged || r.safetyFlagged ? "bg-red-50" : ""}>
-                    <td className="px-3 py-2 text-slate-900">
+                  <tr key={r.intakeSessionId} className={r.emergencyUnacknowledged || r.safetyFlagged ? "bg-red-50" : "hover:bg-slate-50"}>
+                    <td className="px-4 py-3 font-semibold text-slate-900">
                       {r.fullName ?? "Unknown contact"}
-                      {r.safetyFlagged ? <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800">safety</span> : null}
+                      {r.safetyFlagged ? (
+                        <span className="ml-2">
+                          <StatusPill tone="danger">safety</StatusPill>
+                        </span>
+                      ) : null}
                     </td>
-                    <td className="px-3 py-2 text-slate-700">{r.channel.replace(/_/g, " ")}</td>
-                    <td className="px-3 py-2 text-slate-700">{r.status.replace(/_/g, " ")}</td>
-                    <td className="px-3 py-2 text-slate-700">{r.responseOutcome ? r.responseOutcome.replace(/_/g, " ") : fmt(r.responseTargetAt)}</td>
-                    <td className="px-3 py-2 text-slate-700">{r.fitOutcome ?? "—"}</td>
-                    <td className="px-3 py-2 text-slate-500">{fmt(r.startedAt)}</td>
+                    <td className={TD}>{r.channel.replace(/_/g, " ")}</td>
+                    <td className={TD}>
+                      <StatusPill tone="info">{r.status.replace(/_/g, " ")}</StatusPill>
+                    </td>
+                    <td className={TD}>{r.responseOutcome ? r.responseOutcome.replace(/_/g, " ") : fmt(r.responseTargetAt)}</td>
+                    <td className={TD}>{r.fitOutcome ?? "—"}</td>
+                    <td className="px-4 py-3 text-slate-500">{fmt(r.startedAt)}</td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
-        </div>
+        </Card>
       </section>
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase text-slate-500">
+        <SectionTitle hint="Until each item is approved, its wording shows as a visible placeholder and gated actions are blocked and logged.">
           Waiting for sign-off ({pending.length} of {gates.length})
-        </h2>
-        <p className="mb-2 text-sm text-slate-600">
-          Until each item is approved, its wording shows as a visible placeholder and gated actions are blocked and logged.
-        </p>
-        <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white text-sm">
-          {pending.map((g) => (
-            <li key={g.gate.key} className="flex items-start justify-between gap-4 px-3 py-2">
-              <span className="text-slate-800">
-                {g.gate.description}
-                <span className="ml-2 font-mono text-xs text-slate-400">{g.gate.key}</span>
-              </span>
-              <span className="shrink-0 text-xs text-slate-500">{g.pendingReviewers.join(", ")}</span>
-            </li>
-          ))}
-        </ul>
+        </SectionTitle>
+        <Card>
+          <ul className="divide-y divide-slate-100 text-sm">
+            {pending.map((g) => (
+              <li key={g.gate.key} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                <span className="text-slate-800">
+                  {g.gate.description}
+                  <span className="ml-2 font-mono text-xs text-slate-400">{g.gate.key}</span>
+                </span>
+                <span className="shrink-0">
+                  <StatusPill tone="warning">{g.pendingReviewers.join(", ")}</StatusPill>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
       </section>
     </div>
   );
