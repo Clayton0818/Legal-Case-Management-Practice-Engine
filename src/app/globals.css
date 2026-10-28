@@ -16,3 +16,55 @@
     outline-offset: 2px;
   }
 }
+
+/* Inner pages (staff console content area and the demo body carry `.lux`).
+   Older pages are written with plain Tailwind cards, tables and buttons;
+   these scoped rules give them the Style B finish — serif page titles, soft
+   rounded cards, pill buttons — without editing each page. Unlayered and
+   class-scoped so they win over the matching utilities. Colour is never set
+   here, so dark espresso panels keep their own text colour. */
+.lux h1 {
+  font-family: "Instrument Serif", Georgia, Cambria, "Times New Roman", serif;
+  font-weight: 400;
+  font-size: 2.25rem;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+@media (min-width: 768px) {
+  .lux h1 {
+    font-size: 3rem;
+  }
+}
+.lux h2.uppercase {
+  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+}
+
+/* Cards and table wrappers: soft rounded white panels on ivory. */
+.lux .border.bg-white:is(.rounded, .rounded-md, .rounded-lg, .rounded-xl) {
+  border-radius: 1.125rem;
+  border-color: rgba(36, 27, 23, 0.06);
+  box-shadow: 0 1px 2px rgba(36, 27, 23, 0.05);
+}
+.lux .border:is(.rounded, .rounded-md, .rounded-lg):is(.bg-red-50, .bg-amber-50, .bg-emerald-50, .bg-green-50, .bg-sky-50, .bg-blue-50) {
+  border-radius: 1.125rem;
+}
+.lux table thead:is(.bg-slate-50, .bg-slate-100) {
+  background-color: #fbf9f6;
+}
+
+/* Filled buttons and button-like links become 44px pills. */
+.lux :is(button, a, input[type="submit"])[class*="bg-"]:is(.rounded, .rounded-md, .rounded-lg) {
+  border-radius: 9999px;
+  min-height: 2.75rem;
+  padding-left: 1.25rem;
+  padding-right: 1.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Form fields: softer corners, warm border. */
+.lux :is(input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]), select, textarea):is(.rounded, .rounded-md, .rounded-lg) {
+  border-radius: 0.875rem;
+}

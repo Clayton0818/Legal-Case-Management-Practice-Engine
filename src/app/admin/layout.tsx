@@ -7,6 +7,8 @@
 //
 // Espresso & champagne theme: floating espresso sidebar on desktop, a pill
 // tab row on tablet, and a floating bottom bar on phones (see AdminNav).
+// The content area carries `.lux` (see globals.css) so older inner pages
+// pick up serif titles, soft cards and pill buttons.
 import Link from "next/link";
 import { AdminBottomNav, AdminSidebarNav, AdminTabNav } from "./_components/AdminNav";
 
@@ -48,7 +50,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <AdminTabNav />
         </nav>
 
-        <div className="mx-auto max-w-6xl px-4 pb-28 pt-6 md:px-6 md:pb-10 lg:px-6 lg:py-4">{children}</div>
+        <div className="lux mx-auto max-w-6xl px-4 pb-28 pt-6 md:px-6 md:pb-10 lg:px-6 lg:py-4">{children}</div>
       </div>
 
       {/* Phone: floating bottom bar */}
