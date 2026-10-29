@@ -22,6 +22,26 @@ const warmSlate = {
   950: "#140F0C",
 };
 
+// The older inner pages use sky / blue / indigo as their "primary" colour
+// (links, primary buttons, selected states). Those are REMAPPED to a
+// champagne-ink scale so they pick up the brand without per-page edits.
+// 600+ are dark enough for white button text (600: 6.6:1) and for link
+// text on white / ivory. Red, amber and green are left alone on purpose:
+// they carry meaning (error, warning, success).
+const champagneInk = {
+  50: "#FAF6EE",
+  100: "#F3EAD8",
+  200: "#E8D6B4",
+  300: "#D4B07A",
+  400: "#B8925A",
+  500: "#96713C",
+  600: "#7A5524",
+  700: "#5C3F19",
+  800: "#43300F",
+  900: "#2E200A",
+  950: "#1E1505",
+};
+
 export default {
   content: [
     "./src/app/**/*.{ts,tsx}",
@@ -31,6 +51,9 @@ export default {
     extend: {
       colors: {
         slate: warmSlate,
+        sky: champagneInk,
+        blue: champagneInk,
+        indigo: champagneInk,
         espresso: {
           DEFAULT: "#241B17",
           deep: "#1E1714",

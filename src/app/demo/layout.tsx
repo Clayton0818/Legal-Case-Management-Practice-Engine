@@ -37,7 +37,8 @@ export default function DemoLayout({ children }: { children: React.ReactNode }) 
           </Link>
         </div>
       </header>
-      <div className="mx-auto max-w-5xl px-4 py-6 md:px-6">{children}</div>
+      {/* `.lux` (globals.css): serif titles, soft cards, pill buttons. */}
+      <div className="lux mx-auto max-w-5xl px-4 py-6 md:px-6">{children}</div>
     </div>
   );
 }
