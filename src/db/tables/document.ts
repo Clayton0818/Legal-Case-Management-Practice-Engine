@@ -16,6 +16,9 @@
 //   document_retention_rules   firm-entered retention periods (gated config; applied only via rules.retention_periods)
 //   document_checklist_templates  firm-set required-documents checklist per practice area (c49)
 //   document_checklist_items      one matter's required-documents checklist (c49)
+//   document_templates            firm template library: letters, pleadings, forms, agreements (c85)
+//   document_template_versions    versioned template bodies; only 'approved' ones generate (c85)
+//   generated_document_sources    which template version + field values produced a document version (c85)
 //
 // Conventions (./foundation.ts): NOT NULL tenantId -> firms.id on every
 // table, text + CHECK for statuses, timestamptz, indexes leading with
@@ -497,6 +500,100 @@ export const documentChecklistItems = pgTable("document_checklist_items", {
 ]);
 
 // ---------------------------------------------------------------------------
+// Templates that fill themselves from matter data (c85)
+// ---------------------------------------------------------------------------
+
+/**
+ * The firm's template library (c85). Metadata only; the body lives on each
+ * version. Retiring stops new use; documents already generated keep their
+ * link to the version they came from.
+ */
+export const documentTemplates = pgTable("document_templates", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  name: text("name").notNull(),
+  /** 'letter' | 'pleading' | 'form' | 'agreement'. */
+  category: text("category").notNull(),
+  /** PracticeAreaId or null for every practice area. */
+  practiceArea: text("practice_area"),
+  /** Matter type (e.g. 'uncontested_divorce') or null for every type. */
+  matterType: text("matter_type"),
+  /** 'en' | 'es' | … (c36). */
+  language: text("language").notNull().default("en"),
+  /** 'active' | 'retired'. */
+  status: text("status").notNull().default("active"),
+  /** True for a product-shipped starter template (c85 rule 9: arrives as draft, firm lawyer approves). */
+  isStarter: boolean("is_starter").notNull().default(false),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  retiredAt: timestamp("retired_at", { withTimezone: true }),
+  retiredByUserId: uuid("retired_by_user_id").references(() => users.id),
+}, (t) => [
+  index("document_templates_tenant_area_idx").on(t.tenantId, t.practiceArea, t.status),
+  check("document_templates_category_check", sql`${t.category} in ('letter','pleading','form','agreement')`),
+  check("document_templates_status_check", sql`${t.status} in ('active','retired')`),
+]);
+
+/**
+ * One version of a template body (c85). Bodies use the restricted syntax in
+ * src/engines/document/templates/syntax.ts and are validated against the
+ * field catalogue before insert. A version's body is never edited: editing an
+ * approved template creates a new draft version.
+ */
+export const documentTemplateVersions = pgTable("document_template_versions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  templateId: uuid("template_id").notNull().references(() => documentTemplates.id),
+  versionNo: integer("version_no").notNull(),
+  body: text("body").notNull(),
+  sha256: text("sha256").notNull(),
+  /** Catalogue keys the body uses (from parseTemplate), for the editor and impact checks. */
+  fieldKeys: jsonb("field_keys").$type<string[]>().notNull().default([]),
+  /** 'draft' | 'approved' | 'superseded'. At most one 'approved' per template. */
+  status: text("status").notNull().default("draft"),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  approvedByUserId: uuid("approved_by_user_id").references(() => users.id),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  supersededAt: timestamp("superseded_at", { withTimezone: true }),
+}, (t) => [
+  uniqueIndex("document_template_versions_no_key").on(t.tenantId, t.templateId, t.versionNo),
+  uniqueIndex("document_template_versions_one_approved_key")
+    .on(t.tenantId, t.templateId)
+    .where(sql`${t.status} = 'approved'`),
+  check("document_template_versions_status_check", sql`${t.status} in ('draft','approved','superseded')`),
+  check("document_template_versions_version_check", sql`${t.versionNo} >= 1`),
+  check(
+    "document_template_versions_approved_by_check",
+    sql`${t.status} = 'draft' or (${t.approvedByUserId} is not null and ${t.approvedAt} is not null)`
+  ),
+]);
+
+/**
+ * Provenance of a generated draft (c85 rule 7): the template version and a
+ * snapshot of the field values used, plus the placeholders left open and any
+ * lawyer clearances. Contains client data, so it follows the matter's
+ * retention (c2, c90).
+ */
+export const generatedDocumentSources = pgTable("generated_document_sources", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  documentId: uuid("document_id").notNull().references(() => documents.id),
+  matterId: uuid("matter_id").notNull().references(() => matters.id),
+  templateVersionId: uuid("template_version_id").notNull().references(() => documentTemplateVersions.id),
+  fieldValues: jsonb("field_values").$type<Record<string, unknown>>().notNull().default({}),
+  /** Placeholder[] from renderTemplate(). */
+  placeholders: jsonb("placeholders").$type<{ key: string; label: string; reason: string }[]>().notNull().default([]),
+  /** PlaceholderClearance[] — each with the clearing lawyer and reason (also audited). */
+  clearances: jsonb("clearances").$type<{ key: string; reason: string; clearedByUserId: string }[]>().notNull().default([]),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("generated_document_sources_document_key").on(t.tenantId, t.documentId),
+  index("generated_document_sources_tenant_template_idx").on(t.tenantId, t.templateVersionId),
+]);
+
+// ---------------------------------------------------------------------------
 // MIGRATION NOTES for the integration step (hand-add to the generated SQL):
 //
 // 1. RLS + the standard tenant_isolation policy (same text as migrations/0000)
@@ -504,7 +601,8 @@ export const documentChecklistItems = pgTable("document_checklist_items", {
 //    document_folder_templates, document_folders, document_groups,
 //    document_version_files, document_text, document_access_log,
 //    document_access_blocks, document_retention_rules,
-//    document_checklist_templates, document_checklist_items.
+//    document_checklist_templates, document_checklist_items,
+//    document_templates, document_template_versions, generated_document_sources.
 //
 // 2. Staging grants app_runtime SELECT/INSERT/UPDATE/DELETE on new tables by
 //    default. Restrict as follows:
@@ -566,4 +664,20 @@ export const documentChecklistItems = pgTable("document_checklist_items", {
 //    src/engines/document/checklist/service.ts. app_runtime keeps ordinary
 //    UPDATE on this table; only DELETE is revoked (items are archived, not
 //    deleted — see the table's own comment).
+//
+// 9. c85 templates. Same never-delete rule as the rest of this file:
+//      REVOKE DELETE ON document_templates, document_template_versions,
+//        generated_document_sources FROM app_runtime;
+//    A version's body is immutable once written; app_runtime may only move
+//    its status:
+//      REVOKE UPDATE ON document_template_versions FROM app_runtime;
+//      GRANT UPDATE (status, approved_by_user_id, approved_at, superseded_at)
+//        ON document_template_versions TO app_runtime;
+//    generated_document_sources: only clearances change after insert:
+//      REVOKE UPDATE ON generated_document_sources FROM app_runtime;
+//      GRANT UPDATE (clearances) ON generated_document_sources TO app_runtime;
+//    The partial unique index document_template_versions_one_approved_key
+//    must be emitted with its WHERE clause; approving a new version must
+//    supersede the old one in the same transaction, before the insert/update
+//    that sets the new one to 'approved'.
 // ---------------------------------------------------------------------------
