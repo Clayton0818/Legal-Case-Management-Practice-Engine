@@ -23,6 +23,11 @@
 //   signature_signers             c4 — one signer on one envelope, in order
 //   court_filings                  c86 — one e-filing submission of an approved document version, and its status
 //   filing_service_records         c86 — service of a filing on one other party (opposing party, opposing counsel, …)
+//   document_share_links           c89 — outbound sharing: an expiring, access-logged, revocable link to one
+//                                   pinned document version, for a client, opposing counsel, an expert or
+//                                   anyone else outside the firm. The INBOUND side (clients uploading through
+//                                   the portal) is c49/c11 and lives in document_checklist_items + the shared
+//                                   documents table, not here.
 //
 // Conventions (./foundation.ts): NOT NULL tenantId -> firms.id on every
 // table, text + CHECK for statuses, timestamptz, indexes leading with
@@ -289,7 +294,7 @@ export const documentAccessLog = pgTable("document_access_log", {
   documentId: uuid("document_id").references(() => documents.id),
   groupId: uuid("group_id").references(() => documentGroups.id),
   matterId: uuid("matter_id").references(() => matters.id),
-  /** 'user' | 'client' | 'system'. */
+  /** 'user' | 'client' | 'system' | 'external_recipient' (c89: a share-link token, never a platform account). */
   actorType: text("actor_type").notNull(),
   actorUserId: uuid("actor_user_id").references(() => users.id),
   actorPartyId: uuid("actor_party_id").references(() => parties.id),
@@ -306,7 +311,7 @@ export const documentAccessLog = pgTable("document_access_log", {
   index("document_access_log_tenant_document_idx").on(t.tenantId, t.documentId, t.occurredAt),
   index("document_access_log_tenant_matter_idx").on(t.tenantId, t.matterId, t.occurredAt),
   index("document_access_log_tenant_user_idx").on(t.tenantId, t.actorUserId, t.occurredAt),
-  check("document_access_log_actor_type_check", sql`${t.actorType} in ('user','client','system')`),
+  check("document_access_log_actor_type_check", sql`${t.actorType} in ('user','client','system','external_recipient')`),
   check(
     "document_access_log_action_check",
     sql`${t.action} in ('view','download','list','search','version_history')`
@@ -767,6 +772,75 @@ export const filingServiceRecords = pgTable("filing_service_records", {
 ]);
 
 // ---------------------------------------------------------------------------
+// Outbound document sharing (c89) — expiring, access-logged, revocable links
+// ---------------------------------------------------------------------------
+
+/**
+ * One outbound share: a single, pinned document VERSION (never "whatever is
+ * current later") made reachable by anyone who holds the link, for a limited
+ * time, with every view/download going through document_access_log the same
+ * way a signed-in user's or client's does (actorType 'external_recipient').
+ *
+ * `tokenHash` is the ONLY thing ever stored for the access token — a
+ * SHA-256 of a 32-byte random secret minted by
+ * src/engines/document/exchange/crypto.ts. The raw token (which also carries
+ * the tenant id, so the public endpoint can find the right tenant without a
+ * cross-tenant lookup — see that file's header comment) is returned once, to
+ * the creating request, and never written anywhere.
+ *
+ * Privilege is enforced at creation, not just at read time: sharing a
+ * privileged/work-product/sealed document, or sharing ANY document with a
+ * 'client' recipient that is not already clientVisible, needs an explicit,
+ * separate confirmation + reason (service.ts createShareLink) — recorded
+ * here so the override decision is itself auditable, not just logged once
+ * and forgotten.
+ */
+export const documentShareLinks = pgTable("document_share_links", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  matterId: uuid("matter_id").notNull().references(() => matters.id),
+  groupId: uuid("group_id").notNull().references(() => documentGroups.id),
+  /** The exact version pinned at creation — what is actually served, whatever happens to the group later. */
+  documentId: uuid("document_id").notNull().references(() => documents.id),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  /** 'client' | 'opposing_counsel' | 'expert' | 'other'. */
+  recipientType: text("recipient_type").notNull(),
+  /** Name/org only — whatever the firm needs to tell links apart. Never an address or other contact detail. */
+  recipientLabel: text("recipient_label"),
+  /** SHA-256 hex of the random secret. The plaintext token is never stored. */
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  /** Null = unlimited. */
+  maxDownloads: integer("max_downloads"),
+  downloadCount: integer("download_count").notNull().default(0),
+  lastAccessedAt: timestamp("last_accessed_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  revokedByUserId: uuid("revoked_by_user_id").references(() => users.id),
+  revokedReason: text("revoked_reason"),
+  /** True only when the document's privilege tag (or client-visibility) required an explicit override to share it anyway. */
+  privilegedOverrideConfirmed: boolean("privileged_override_confirmed").notNull().default(false),
+  privilegedOverrideConfirmedByUserId: uuid("privileged_override_confirmed_by_user_id").references(() => users.id),
+  privilegedOverrideReason: text("privileged_override_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("document_share_links_token_key").on(t.tenantId, t.tokenHash),
+  index("document_share_links_tenant_matter_idx").on(t.tenantId, t.matterId),
+  index("document_share_links_tenant_group_idx").on(t.tenantId, t.groupId),
+  index("document_share_links_tenant_expiry_idx").on(t.tenantId, t.expiresAt),
+  check(
+    "document_share_links_recipient_type_check",
+    sql`${t.recipientType} in ('client','opposing_counsel','expert','other')`
+  ),
+  check("document_share_links_max_downloads_check", sql`${t.maxDownloads} is null or ${t.maxDownloads} >= 1`),
+  check("document_share_links_download_count_check", sql`${t.downloadCount} >= 0`),
+  check("document_share_links_revoked_reason_check", sql`${t.revokedAt} is null or ${t.revokedReason} is not null`),
+  check(
+    "document_share_links_override_check",
+    sql`not ${t.privilegedOverrideConfirmed} or (${t.privilegedOverrideConfirmedByUserId} is not null and ${t.privilegedOverrideReason} is not null)`
+  ),
+]);
+
+// ---------------------------------------------------------------------------
 // MIGRATION NOTES for the integration step (hand-add to the generated SQL):
 //
 // 1. RLS + the standard tenant_isolation policy (same text as migrations/0000)
@@ -874,4 +948,26 @@ export const filingServiceRecords = pgTable("filing_service_records", {
 //     DELETE rule is needed from court_filings.documentId /
 //     stampedDocumentId or filing_service_records.proofDocumentId to a
 //     specific version, since `documents` rows are never deleted (note 3).
+//
+// 12. document_share_links (c89): RLS + tenant_isolation like every other
+//     table in this file. A link is REVOKED, never deleted (the same
+//     "history survives" reasoning as signature_envelopes / court_filings —
+//     notes 10/11), so:
+//       REVOKE DELETE ON document_share_links FROM app_runtime;
+//     app_runtime keeps ordinary UPDATE (download_count, last_accessed_at,
+//     revoked_at/revoked_by_user_id/revoked_reason all move in place after
+//     the row is created). token_hash/document_id/group_id/matter_id are
+//     set once at creation and never change in the app's own code, but
+//     unlike document_version_files there is no integrity reason to also
+//     revoke UPDATE on those columns at the database level here.
+//
+// 13. document_access_log.actor_type widens from this PR's base
+//     ('user'|'client'|'system') to add 'external_recipient' (c89: a
+//     share-link token holder, which is nobody's user or party row). This is
+//     an ALTER on an EXISTING constraint, not a new-table note — hand-add:
+//       ALTER TABLE document_access_log DROP CONSTRAINT document_access_log_actor_type_check;
+//       ALTER TABLE document_access_log ADD CONSTRAINT document_access_log_actor_type_check
+//         CHECK (actor_type in ('user','client','system','external_recipient'));
+//     Purely additive (widens the allowed set) — no backfill, no existing
+//     row can violate it.
 // ---------------------------------------------------------------------------
