@@ -198,12 +198,42 @@ function definePackCopyGates(): Gate[] {
 
 export const PACK_COPY_GATES: readonly Gate[] = definePackCopyGates();
 
+/**
+ * c124 group messaging. Client-facing wording only: whether to represent
+ * several clients jointly is the lawyer's own decision, which the software
+ * records but never makes. Until approved, each shows the visible
+ * "[PENDING ATTORNEY REVIEW …]" placeholder; a consent recorded meanwhile
+ * stores that the wording was not yet approved.
+ */
+export const GROUP_MESSAGING_GATES = {
+  consentWording: defineGate({
+    key: "copy.all-engines.joint_sharing_consent",
+    cardIds: ["c124"],
+    reviewers: [...ATTORNEY],
+    description: "Consent a client gives to sharing information about the matter with the other clients on it (joint representation), read to or signed by each client",
+    draft:
+      "You and the other clients on this matter are represented together. Anything you tell the firm about the matter may be shared with them, " +
+      "and messages the firm sends to the group go to all of you. If your interests come into conflict, the firm may not be able to keep " +
+      "representing all of you. You can withdraw this consent at any time by telling the firm.",
+  }),
+  newMessageNotice: defineGate({
+    key: "copy.all-engines.group_message_notice",
+    cardIds: ["c124"],
+    reviewers: [...ATTORNEY],
+    description: "Email telling a client there is a new group message about their matter (no case details; read it in the portal)",
+    draft: "Subject: New message from {firmName}\n\nThere is a new message about your matter. Please read it in {portalUrl}.",
+  }),
+} as const;
+
 export const ALL_ENGINES_GATE_KEYS: readonly string[] = [
   ...Object.values(FAMILY_RULE_GATES).map((g) => g.key),
   ...Object.values(IMMIGRATION_RULE_GATES).map((g) => g.key),
   ...Object.values(PERSONAL_INJURY_RULE_GATES).map((g) => g.key),
   ...PACK_COPY_GATES.map((g) => g.key),
 ];
+
+/** c124's own wording gates (kept apart from the practice-area pack keys above). */
+export const GROUP_MESSAGING_GATE_KEYS: readonly string[] = Object.values(GROUP_MESSAGING_GATES).map((g) => g.key);
 
 /** Shared gates this engine's packs depend on (shown on the admin pages). */
 export const ALL_ENGINES_SHARED_GATE_KEYS: readonly string[] = [

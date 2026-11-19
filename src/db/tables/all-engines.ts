@@ -13,10 +13,11 @@
 //      in wave 3 so core can resolve roles; same SQL tables)
 // c102 practice areas: practice_area_pack_adoptions (+ access_change_log)
 // c98  data import: import_batches, import_rows
+// c124 group messaging: joint_representations, client_sharing_consents, matter_group_messages
 
 import { sql } from "drizzle-orm";
 import { pgTable, uuid, text, boolean, integer, timestamp, jsonb, index, uniqueIndex, check } from "drizzle-orm/pg-core";
-import { firms, users, matters } from "../schema";
+import { firms, users, matters, parties } from "../schema";
 
 // ---------------------------------------------------------------------------
 // c99 — matter-level access on top of roles
@@ -185,13 +186,88 @@ export const importRows = pgTable("import_rows", {
 ]);
 
 // ---------------------------------------------------------------------------
+// c124 — group messaging for matters with more than one client
+// ---------------------------------------------------------------------------
+
+/**
+ * A lawyer's record that a matter is a joint representation (several clients
+ * represented together). Group messages are only possible while one is active.
+ * Ending it sets endedAt; rows are never deleted.
+ */
+export const jointRepresentations = pgTable("joint_representations", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  matterId: uuid("matter_id").notNull().references(() => matters.id),
+  markedByUserId: uuid("marked_by_user_id").notNull().references(() => users.id),
+  markedAt: timestamp("marked_at", { withTimezone: true }).notNull().defaultNow(),
+  note: text("note"),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+  endedByUserId: uuid("ended_by_user_id").references(() => users.id),
+  endReason: text("end_reason"),
+}, (t) => [
+  index("joint_representations_tenant_matter_idx").on(t.tenantId, t.matterId),
+  uniqueIndex("joint_representations_active_key").on(t.tenantId, t.matterId).where(sql`${t.endedAt} is null`),
+  check("joint_representations_end_check", sql`${t.endedAt} is null or (${t.endedByUserId} is not null and ${t.endReason} is not null)`),
+]);
+
+/**
+ * One client's consent to information about the matter being shared with the
+ * other clients on it, as recorded by staff. Stores which consent wording was
+ * used (gate key + draft hash) and whether it was attorney-approved at the
+ * time. Withdrawal sets withdrawnAt; rows are never deleted.
+ */
+export const clientSharingConsents = pgTable("client_sharing_consents", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  matterId: uuid("matter_id").notNull().references(() => matters.id),
+  partyId: uuid("party_id").notNull().references(() => parties.id),
+  consentGateKey: text("consent_gate_key").notNull(),
+  consentDraftHash: text("consent_draft_hash"),
+  consentWordingApproved: boolean("consent_wording_approved").notNull(),
+  recordedByUserId: uuid("recorded_by_user_id").notNull().references(() => users.id),
+  givenAt: timestamp("given_at", { withTimezone: true }).notNull().defaultNow(),
+  withdrawnAt: timestamp("withdrawn_at", { withTimezone: true }),
+  withdrawnRecordedByUserId: uuid("withdrawn_recorded_by_user_id").references(() => users.id),
+  withdrawReason: text("withdraw_reason"),
+}, (t) => [
+  index("client_sharing_consents_tenant_matter_idx").on(t.tenantId, t.matterId),
+  uniqueIndex("client_sharing_consents_active_key").on(t.tenantId, t.matterId, t.partyId).where(sql`${t.withdrawnAt} is null`),
+  check("client_sharing_consents_withdraw_check", sql`${t.withdrawnAt} is null or ${t.withdrawnRecordedByUserId} is not null`),
+]);
+
+/**
+ * A message on a matter's group thread, written by staff or by one of the
+ * clients, and the exact set of clients it went to. APPEND-ONLY.
+ */
+export const matterGroupMessages = pgTable("matter_group_messages", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  matterId: uuid("matter_id").notNull().references(() => matters.id),
+  /** 'staff' | 'client'. */
+  authorType: text("author_type").notNull(),
+  authorUserId: uuid("author_user_id").references(() => users.id),
+  authorPartyId: uuid("author_party_id").references(() => parties.id),
+  body: text("body").notNull(),
+  recipientPartyIds: uuid("recipient_party_ids").array().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("matter_group_messages_tenant_matter_idx").on(t.tenantId, t.matterId, t.createdAt),
+  check("matter_group_messages_author_type_check", sql`${t.authorType} in ('staff','client')`),
+  check(
+    "matter_group_messages_author_check",
+    sql`(${t.authorType} = 'staff' and ${t.authorUserId} is not null and ${t.authorPartyId} is null) or (${t.authorType} = 'client' and ${t.authorPartyId} is not null and ${t.authorUserId} is null)`
+  ),
+]);
+
+// ---------------------------------------------------------------------------
 // MIGRATION NOTES for the integration step (hand-add to the generated SQL):
 //
 // 1. RLS + the standard tenant_isolation policy (same text as migrations/0000)
 //    on every table in this file:
 //    permission_overrides, firm_role_assignments, matter_access_settings,
 //    matter_team_members, access_change_log, practice_area_pack_adoptions,
-//    import_batches, import_rows.
+//    import_batches, import_rows, joint_representations,
+//    client_sharing_consents, matter_group_messages.
 // 2. Staging grants app_runtime SELECT/INSERT/UPDATE/DELETE by default. Then:
 //    - access_change_log is APPEND-ONLY (c6 / c99 "every permission change logged"):
 //        REVOKE UPDATE, DELETE ON access_change_log FROM app_runtime;
@@ -206,6 +282,12 @@ export const importRows = pgTable("import_rows", {
 //      what was imported and from where): REVOKE DELETE ON import_batches,
 //      import_rows FROM app_runtime;
 //    - REVOKE ALL ON all eight tables FROM anon, authenticated; (as migration 0004)
+//    - c124: joint_representations and client_sharing_consents keep every
+//      row (end/withdraw instead of delete): REVOKE DELETE ON
+//      joint_representations, client_sharing_consents FROM app_runtime;
+//      matter_group_messages is APPEND-ONLY: REVOKE UPDATE, DELETE ON
+//      matter_group_messages FROM app_runtime; and REVOKE ALL ON all three
+//      FROM anon, authenticated. RLS + tenant_isolation on all three (#1).
 // 3. The role CHECK lists (now in ./foundation.ts) mirror FIRM_ROLES in
 //    src/core/permissions.ts minus 'client'; keep them in sync.
 // 4. Later (c99 follow-up): role-based RLS policies for party-index and
