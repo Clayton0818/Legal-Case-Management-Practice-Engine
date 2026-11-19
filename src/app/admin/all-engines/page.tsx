@@ -34,6 +34,10 @@ export default async function AllEnginesAdminPage() {
           <div className="font-medium text-slate-900">Branding</div>
           <div className="mt-1 text-sm text-slate-600">The firm&rsquo;s accent color, used across the whole console.</div>
         </Link>
+        <Link href="/admin/all-engines/group-messages" className="rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-400">
+          <div className="font-medium text-slate-900">Group messages</div>
+          <div className="mt-1 text-sm text-slate-600">One thread for matters with more than one client, once each client consents.</div>
+        </Link>
       </div>
       <section className="rounded-lg border border-slate-200 bg-white p-4 text-sm">
         <h2 className="font-semibold text-slate-900">Waiting for review</h2>
