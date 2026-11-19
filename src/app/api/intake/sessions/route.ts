@@ -4,6 +4,7 @@ import { getDevTenantId } from "@/tenancy/devTenant";
 import { firmConfigVersions, intakeEvents, intakeSessions } from "@/db/schema";
 import { getPrompt } from "@/lib/intakeEntryFlow/engine";
 import { normalizeIntakeLanguage } from "@/engines/intake/gates";
+import type { LeadAttributionInput } from "@/engines/intake/attribution/model";
 
 // withTenant (and, transitively, src/tenancy/db.ts) is imported lazily
 // inside the handler, not statically at module scope. db.ts throws at
@@ -26,20 +27,58 @@ import { normalizeIntakeLanguage } from "@/engines/intake/gates";
 class FirmNotConfiguredError extends Error {}
 
 /**
- * The language to start the session in (c36). An optional JSON body may
- * name it explicitly (`{ "language": "es" }`); anything else — no body, an
- * unparsable body, or no `language` field — defaults to English, same as
- * this route's behaviour before c36. `req.json()` on a body-less POST
- * throws, which is expected and simply falls through to the default.
+ * The optional JSON body, read exactly ONCE. A request body is a stream —
+ * it can only be consumed one time — and two things on this route want it:
+ * the session language (c36) and the lead attribution (c74). So it is
+ * parsed here and both are derived from the same object. `req.json()` on a
+ * body-less POST throws, which is expected: no body, an unparsable body or
+ * a non-object body all come back as null and every reader below falls
+ * through to its default.
  */
-async function requestedLanguage(req: Request): Promise<"en" | "es"> {
+async function readOptionalBody(req: Request): Promise<Record<string, unknown> | null> {
   try {
     const body = (await req.json()) as unknown;
-    const value = body && typeof body === "object" ? (body as Record<string, unknown>).language : undefined;
-    return normalizeIntakeLanguage(value);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+    return body as Record<string, unknown>;
   } catch {
-    return "en";
+    return null;
   }
+}
+
+/**
+ * The language to start the session in (c36). The body may name it
+ * explicitly (`{ "language": "es" }`); anything else — no body, or no
+ * `language` field — defaults to English, same as this route's behaviour
+ * before c36.
+ */
+function requestedLanguage(body: Record<string, unknown> | null): "en" | "es" {
+  return normalizeIntakeLanguage(body?.language);
+}
+
+// c74: the widget/landing page can pass where this inquiry came from —
+// landingPage/campaignTag/isGoogleAds/directoryName/referralSource/
+// phoneTrackingNumber — in the same OPTIONAL JSON body. Reading it is
+// best-effort on purpose: a missing or malformed body must never stop a
+// session from being created (that would turn an analytics nice-to-have
+// into an outage), so it just means "no attribution captured yet" rather
+// than a 400. Staff can always add or correct it later through
+// PATCH /api/intake/sessions/[id]/attribution.
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function attributionFrom(b: Record<string, unknown> | null): LeadAttributionInput | null {
+  if (!b) return null;
+  const input: LeadAttributionInput = {
+    landingPage: isNonEmptyString(b.landingPage) ? b.landingPage : null,
+    campaignTag: isNonEmptyString(b.campaignTag) ? b.campaignTag : null,
+    isGoogleAds: b.isGoogleAds === true,
+    directoryName: isNonEmptyString(b.directoryName) ? b.directoryName : null,
+    referralSource: isNonEmptyString(b.referralSource) ? b.referralSource : null,
+    phoneTrackingNumber: isNonEmptyString(b.phoneTrackingNumber) ? b.phoneTrackingNumber : null,
+  };
+  const hasAnySignal = input.isGoogleAds || [input.landingPage, input.campaignTag, input.directoryName, input.referralSource, input.phoneTrackingNumber].some(Boolean);
+  return hasAnySignal ? input : null;
 }
 
 // Creates a new intake session for the (currently single, dev-hardcoded)
@@ -49,7 +88,9 @@ async function requestedLanguage(req: Request): Promise<"en" | "es"> {
 export async function POST(req: Request) {
   const tenantId = getDevTenantId();
   const { withTenant } = await import("@/tenancy/withTenant");
-  const language = await requestedLanguage(req);
+  const body = await readOptionalBody(req);
+  const language = requestedLanguage(body);
+  const attributionInput = attributionFrom(body);
 
   try {
     const session = await withTenant(tenantId, async (tx) => {
@@ -88,6 +129,11 @@ export async function POST(req: Request) {
         payload: { channel: "web_chat", language },
         firmConfigVersionId: config.id,
       });
+
+      if (attributionInput) {
+        const { upsertLeadAttribution } = await import("@/engines/intake/attribution/service");
+        await upsertLeadAttribution(tx, tenantId, created.id, attributionInput);
+      }
 
       return created;
     });

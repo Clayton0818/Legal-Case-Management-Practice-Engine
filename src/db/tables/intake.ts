@@ -1,4 +1,4 @@
-// Tables owned by the Intake engine (c14, c48, c65–c71, c73).
+// Tables owned by the Intake engine (c14, c48, c65–c71, c73, c74).
 //
 // Shared tables live in ./foundation.ts and ../schema.ts (imported, never
 // redefined or edited). Conventions (identical to ./foundation.ts): NOT NULL
@@ -681,6 +681,59 @@ export const intakeReferralDirectory = pgTable("intake_referral_directory", {
 }, (t) => [index("intake_referral_directory_tenant_idx").on(t.tenantId, t.active)]);
 
 // ---------------------------------------------------------------------------
+// c74 — lead-source attribution & conversion funnel (Go-to-Market)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where one inquiry came from, captured once per intake session (staff can
+ * correct it later — e.g. a phone-tracking vendor resolving a campaign after
+ * the fact). Distinct from `intakeSessionState.referralSource` above (c73),
+ * which records where a NO-FIT prospect was referred OUT to — the opposite
+ * direction. Internal/staff-facing only: the conversion-funnel report
+ * (src/engines/intake/attribution) reads this table to produce aggregate
+ * counts by source, practice area and staff member; nothing here, or
+ * derived from here, is ever shown on a client-facing surface, and no
+ * report view built on top of it names an individual lead — see
+ * docs/go-to-market/lead-source-attribution.md.
+ */
+export const intakeLeadAttribution = pgTable("intake_lead_attribution", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => firms.id),
+  intakeSessionId: uuid("intake_session_id").notNull().references(() => intakeSessions.id),
+  /** Landing page path/URL the inquiry started on, e.g. '/family-law'. */
+  landingPage: text("landing_page"),
+  /** Marketing campaign / UTM tag, e.g. 'spring_divorce_2026'. */
+  campaignTag: text("campaign_tag"),
+  /** True when the click path or query params identify this as a Google Ads lead. */
+  isGoogleAds: boolean("is_google_ads").notNull().default(false),
+  /** Legal directory name, e.g. 'Avvo', 'FindLaw', 'Justia'. */
+  directoryName: text("directory_name"),
+  /**
+   * Marketing-style referral source (word of mouth, another attorney, a
+   * past client). Distinct from the structured c71 identity-matching
+   * machinery and from c73's outbound `referralSource` above — this is
+   * free text about where THIS inquiry said it came from.
+   */
+  referralSource: text("referral_source"),
+  /**
+   * The number the caller dialed, when the firm uses call-tracking numbers
+   * (normalised to digits + leading '+'; see
+   * src/engines/intake/attribution/model.ts#normalizeTrackingNumber).
+   * Resolving WHICH campaign a tracking number maps to — i.e. an actual
+   * call-tracking vendor integration — is gated behind VENDOR_GATES.voice
+   * (src/engines/intake/attribution/provider.ts); recording the dialed
+   * number itself needs no vendor and no gate.
+   */
+  phoneTrackingNumber: text("phone_tracking_number"),
+  capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("intake_lead_attribution_session_key").on(t.tenantId, t.intakeSessionId),
+  index("intake_lead_attribution_google_ads_idx").on(t.tenantId, t.isGoogleAds),
+  index("intake_lead_attribution_phone_tracking_idx").on(t.tenantId, t.phoneTrackingNumber),
+]);
+
+// ---------------------------------------------------------------------------
 // MIGRATION NOTES for the integration step (hand-add to the generated SQL):
 //
 // 1. RLS + tenant_isolation policy (same text as migrations/0000) on every
@@ -692,7 +745,8 @@ export const intakeReferralDirectory = pgTable("intake_referral_directory", {
 //    intake_busy_blocks, intake_open_gate_evidence, intake_matter_openings,
 //    intake_matter_handoffs, intake_follow_up_runs, intake_fit_rule_sets,
 //    intake_fit_evaluations, intake_referral_directory,
-//    intake_contact_match_suggestions, intake_identity_verifications.
+//    intake_contact_match_suggestions, intake_identity_verifications,
+//    intake_lead_attribution.
 // 2. GRANT SELECT, INSERT, UPDATE, DELETE ON all of the above TO app_runtime,
 //    EXCEPT the history tables below.
 // 3. Append-only history (c6): these are written once and never changed:
@@ -715,4 +769,10 @@ export const intakeReferralDirectory = pgTable("intake_referral_directory", {
 //    (additive, backfills to 'en' for any existing row) plus
 //    intake_consents_language_check ('en','es') — no RLS or GRANT change
 //    beyond the existing intake_consents grants in #2/#3.
+// 7. c74: new table intake_lead_attribution — one row per intake session,
+//    UPDATE needed (captured_at fields get corrected after the fact, e.g.
+//    once a call-tracking vendor resolves a tracking number), so it is NOT
+//    one of the append-only history tables in #3; it gets the standard
+//    SELECT/INSERT/UPDATE/DELETE grant from #2. No column was requested on
+//    any shared table for this card.
 // ---------------------------------------------------------------------------

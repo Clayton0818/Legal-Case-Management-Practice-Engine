@@ -2,6 +2,7 @@
 // Read-only overview: the one queue for every channel, open emergencies, and
 // which intake features are still waiting for attorney / CPA / vendor sign-off.
 // Actions go through /api/intake/**. Internal only — nothing here is client-facing.
+import Link from "next/link";
 import { getDevTenantId } from "@/tenancy/devTenant";
 import { gateStatus } from "@/compliance/approvals";
 import { INTAKE_GATE_KEYS, INTAKE_SHARED_GATE_KEYS } from "@/engines/intake/gates";
@@ -61,7 +62,14 @@ export default async function IntakeConsolePage() {
         eyebrow="Client intake"
         title="Intake"
         description="Every channel lands in one queue. Emergencies are listed first."
-        actions={<StatusPill tone={emergencies > 0 ? "danger" : "brand"}>{queue.length} open</StatusPill>}
+        actions={
+          <>
+            <Link href="/admin/intake/attribution" className="text-sm text-slate-500 hover:underline">
+              Lead source & conversion ↗
+            </Link>
+            <StatusPill tone={emergencies > 0 ? "danger" : "brand"}>{queue.length} open</StatusPill>
+          </>
+        }
       />
 
       {emergencies > 0 ? (
