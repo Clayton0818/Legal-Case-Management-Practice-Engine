@@ -1,6 +1,6 @@
 // All-engines (cross-cutting) console: permissions (c99), practice areas
-// (c102) and the Family Law pack (c103), plus everything this engine is
-// still waiting on from reviewers.
+// (c102), the Family Law pack (c103) and the case assistant (c123), plus
+// everything this engine is still waiting on from reviewers.
 
 import Link from "next/link";
 import { gateStatus } from "@/compliance/approvals";
@@ -29,6 +29,10 @@ export default async function AllEnginesAdminPage() {
         <Link href="/admin/all-engines/practice-areas" className="rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-400">
           <div className="font-medium text-slate-900">Practice areas</div>
           <div className="mt-1 text-sm text-slate-600">Switch areas on or off and review pack updates.</div>
+        </Link>
+        <Link href="/admin/all-engines/assistant" className="rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-400">
+          <div className="font-medium text-slate-900">Case assistant</div>
+          <div className="mt-1 text-sm text-slate-600">Ask about a matter or get a catch-up briefing, answered from its records with sources.</div>
         </Link>
         <Link href="/admin/all-engines/branding" className="rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-400">
           <div className="font-medium text-slate-900">Branding</div>
