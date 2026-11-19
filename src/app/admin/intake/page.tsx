@@ -1,6 +1,7 @@
 // Intake console (c65, c66, c69 + the approval status of every intake gate).
-// Read-only overview: the one queue for every channel, open emergencies, and
-// which intake features are still waiting for attorney / CPA / vendor sign-off.
+// The one queue for every channel, open emergencies, and which intake
+// features are still waiting for attorney / CPA / vendor sign-off. "New
+// intake" (c122) and each queue row open the guided intake page.
 // Actions go through /api/intake/**. Internal only — nothing here is client-facing.
 import Link from "next/link";
 import { getDevTenantId } from "@/tenancy/devTenant";
@@ -68,6 +69,9 @@ export default async function IntakeConsolePage() {
               Lead source & conversion ↗
             </Link>
             <StatusPill tone={emergencies > 0 ? "danger" : "brand"}>{queue.length} open</StatusPill>
+            <Link href="/admin/intake/new" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700">
+              New intake
+            </Link>
           </>
         }
       />
@@ -108,7 +112,9 @@ export default async function IntakeConsolePage() {
                 queue.map((r) => (
                   <tr key={r.intakeSessionId} className={r.emergencyUnacknowledged || r.safetyFlagged ? "bg-red-50" : "hover:bg-slate-50"}>
                     <td className="px-4 py-3 font-semibold text-slate-900">
-                      {r.fullName ?? "Unknown contact"}
+                      <Link href={`/admin/intake/${r.intakeSessionId}`} className="hover:underline">
+                        {r.fullName ?? "Unknown contact"}
+                      </Link>
                       {r.safetyFlagged ? (
                         <span className="ml-2">
                           <StatusPill tone="danger">safety</StatusPill>
